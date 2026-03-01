@@ -50,11 +50,19 @@ api.interceptors.response.use(
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         window.location.href = '/login';
+        return Promise.reject(error);
       } else {
         // 其他401错误只记录日志，不登出用户
         console.error('权限不足:', url, errorMessage);
       }
     }
+
+    // 如果响应体是 ApiResponse 格式（含 success 字段），将其作为正常响应返回，
+    // 让业务代码通过 response.success 判断并展示后端返回的详细错误信息
+    if (error.response?.data && typeof error.response.data.success === 'boolean') {
+      return error.response;
+    }
+
     return Promise.reject(error);
   }
 );

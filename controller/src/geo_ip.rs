@@ -1,6 +1,7 @@
 //! IP 地理位置查询服务
 //!
-//! 使用 ip.sb 免费 API 查询 IP 地址的地理位置信息
+//! 优先使用 cz88（纯真 IP，国内外准确、原生中文），备选 ip-api.com（支持中文），
+//! 最终备选 ip.sb
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,32 @@ pub struct GeoIpInfo {
     pub region: String,
 }
 
-/// 从 ip.sb 查询地理位置信息
+/// cz88 openIPInfo 响应
+#[derive(Debug, Deserialize)]
+struct Cz88Response {
+    code: Option<i32>,
+    success: Option<bool>,
+    data: Option<Cz88Data>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Cz88Data {
+    ip: Option<String>,
+    geo: Option<String>,
+}
+
+/// ip-api.com 响应（支持中文 lang=zh-CN）
+#[derive(Debug, Deserialize)]
+struct IpApiResponse {
+    query: Option<String>,
+    country: Option<String>,
+    #[serde(rename = "regionName")]
+    region_name: Option<String>,
+    city: Option<String>,
+    status: Option<String>,
+}
+
+/// ip.sb 响应（备选，返回英文）
 #[derive(Debug, Deserialize)]
 struct IpSbResponse {
     ip: Option<String>,
@@ -23,39 +49,159 @@ struct IpSbResponse {
 }
 
 /// 查询 IP 地址的地理位置信息
-/// 使用 ip.sb 免费服务（国内 IP 准确度高）
+/// 优先 cz88（国内外准确、中文），备选 ip-api.com（中文），最终 ip.sb（英文）
 pub async fn query_geo_ip(ip: &str) -> Result<GeoIpInfo> {
-    let url = format!("https://api.ip.sb/geoip/{}", ip);
-
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
+
+    // 优先使用 cz88 纯真 IP，国内外都准确，原生中文
+    match query_cz88(&client, ip).await {
+        Ok(info) => return Ok(info),
+        Err(e) => {
+            error!("cz88 查询失败，尝试 ip-api.com: {}", e);
+        }
+    }
+
+    // 备选：ip-api.com，支持中文
+    match query_ip_api(&client, ip).await {
+        Ok(info) => return Ok(info),
+        Err(e) => {
+            error!("ip-api.com 查询失败，尝试 ip.sb: {}", e);
+        }
+    }
+
+    // 最终备选：ip.sb（英文）
+    query_ip_sb(&client, ip).await
+}
+
+/// 使用 cz88 纯真 IP 查询（国内外准确，原生中文）
+async fn query_cz88(client: &reqwest::Client, ip: &str) -> Result<GeoIpInfo> {
+    let url = format!(
+        "https://www.cz88.net/api/cz88/ip/openIPInfo?ip={}",
+        ip
+    );
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| anyhow!("请求 cz88 失败: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(anyhow!("cz88 返回错误状态: {}", response.status()));
+    }
+
+    let api_response: Cz88Response = response
+        .json()
+        .await
+        .map_err(|e| anyhow!("解析 cz88 响应失败: {}", e))?;
+
+    if api_response.code != Some(200) || api_response.success != Some(true) {
+        return Err(anyhow!("cz88 查询失败"));
+    }
+
+    let data = api_response.data.ok_or_else(|| anyhow!("cz88 返回数据为空"))?;
+
+    let geo = data
+        .geo
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("cz88 地区信息为空"))?;
+
+    // cz88 返回格式如 "中国–北京–北京"，用中文短横线分隔，统一替换为普通短横线
+    let region = geo.replace('–', "-");
+
+    let ip = data.ip.unwrap_or_else(|| ip.to_string());
+
+    info!("查询到 IP {} 的地理位置: {}", ip, region);
+    Ok(GeoIpInfo { ip, region })
+}
+
+/// 使用 ip-api.com 查询（返回中文地区名，海外 IP 覆盖好）
+async fn query_ip_api(client: &reqwest::Client, ip: &str) -> Result<GeoIpInfo> {
+    let url = format!(
+        "http://ip-api.com/json/{}?lang=zh-CN&fields=status,query,country,regionName,city",
+        ip
+    );
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| anyhow!("请求 ip-api.com 失败: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(anyhow!(
+            "ip-api.com 返回错误状态: {}",
+            response.status()
+        ));
+    }
+
+    let api_response: IpApiResponse = response
+        .json()
+        .await
+        .map_err(|e| anyhow!("解析 ip-api.com 响应失败: {}", e))?;
+
+    if api_response.status.as_deref() != Some("success") {
+        return Err(anyhow!("ip-api.com 查询失败"));
+    }
+
+    let region = build_region_string(
+        api_response.country,
+        api_response.region_name,
+        api_response.city,
+    );
+    let ip = api_response.query.unwrap_or_else(|| ip.to_string());
+
+    info!("查询到 IP {} 的地理位置: {}", ip, region);
+    Ok(GeoIpInfo { ip, region })
+}
+
+/// 使用 ip.sb 查询（最终备选，返回英文）
+async fn query_ip_sb(client: &reqwest::Client, ip: &str) -> Result<GeoIpInfo> {
+    let url = format!("https://api.ip.sb/geoip/{}", ip);
 
     let response = client
         .get(&url)
         .header("User-Agent", "Mozilla/5.0")
         .send()
         .await
-        .map_err(|e| anyhow!("请求 IP 地理位置 API 失败: {}", e))?;
+        .map_err(|e| anyhow!("请求 ip.sb 失败: {}", e))?;
 
     if !response.status().is_success() {
-        return Err(anyhow!("IP 地理位置 API 返回错误状态: {}", response.status()));
+        return Err(anyhow!("ip.sb 返回错误状态: {}", response.status()));
     }
 
     let api_response: IpSbResponse = response
         .json()
         .await
-        .map_err(|e| anyhow!("解析 IP 地理位置响应失败: {}", e))?;
+        .map_err(|e| anyhow!("解析 ip.sb 响应失败: {}", e))?;
 
-    // 构建地区字符串：国家-省份-城市（自动去重）
-    let country = api_response.country.filter(|s| !s.is_empty());
-    let region = api_response.region.filter(|s| !s.is_empty());
-    let city = api_response.city.filter(|s| !s.is_empty());
+    let region = build_region_string(
+        api_response.country,
+        api_response.region,
+        api_response.city,
+    );
+    let ip = api_response.ip.unwrap_or_else(|| ip.to_string());
 
-    let mut region_parts: Vec<String> = Vec::new();
+    info!("查询到 IP {} 的地理位置（备选服务）: {}", ip, region);
+    Ok(GeoIpInfo { ip, region })
+}
+
+/// 构建地区字符串：国家-省份-城市（自动去重，用于 ip-api.com / ip.sb）
+fn build_region_string(
+    country: Option<String>,
+    region: Option<String>,
+    city: Option<String>,
+) -> String {
+    let country = country.filter(|s| !s.is_empty());
+    let region = region.filter(|s| !s.is_empty());
+    let city = city.filter(|s| !s.is_empty());
+
+    let mut parts: Vec<String> = Vec::new();
 
     if let Some(ref country) = country {
-        region_parts.push(country.clone());
+        parts.push(country.clone());
     }
 
     if let Some(ref region) = region {
@@ -65,29 +211,25 @@ pub async fn query_geo_ip(ip: &str) -> Result<GeoIpInfo> {
             .and_then(|c| region.strip_prefix(c))
             .unwrap_or(region.as_str());
         if !stripped.is_empty() {
-            region_parts.push(stripped.to_string());
+            parts.push(stripped.to_string());
         }
     }
 
     if let Some(ref city) = city {
-        // 避免城市与省份重复（如 region="Tokyo", city="Tokyo"）
-        let duplicate = region_parts.last().map_or(false, |last| last.ends_with(city.as_str()));
+        // 避免城市与省份重复（如 region="东京都", city="东京"）
+        let duplicate = parts
+            .last()
+            .map_or(false, |last| last.contains(city.as_str()) || city.contains(last.as_str()));
         if !duplicate {
-            region_parts.push(city.clone());
+            parts.push(city.clone());
         }
     }
 
-    let region = if region_parts.is_empty() {
+    if parts.is_empty() {
         "Unknown".to_string()
     } else {
-        region_parts.join("-")
-    };
-
-    let ip = api_response.ip.unwrap_or_else(|| ip.to_string());
-
-    info!("查询到 IP {} 的地理位置: {}", ip, region);
-
-    Ok(GeoIpInfo { ip, region })
+        parts.join("-")
+    }
 }
 
 /// 从 gRPC 连接中提取客户端 IP 地址
