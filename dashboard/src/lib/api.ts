@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
@@ -31,9 +31,13 @@ api.interceptors.response.use(
       const url = error.config?.url || '';
       const errorMessage = error.response?.data?.message || '';
 
-      // 登录接口的401错误应该由登录组件自己处理，不在这里跳转
-      const isLoginRequest = url.includes('/auth/login');
+      // 登录/注册接口的401错误应该由组件自己处理，不在这里跳转
+      const isLoginRequest = url.includes('/auth/login') || url.includes('/auth/register');
       if (isLoginRequest) {
+        // 返回 ApiResponse 格式让登录页展示后端的详细错误信息
+        if (error.response?.data && typeof error.response.data.success === 'boolean') {
+          return error.response;
+        }
         return Promise.reject(error);
       }
 
