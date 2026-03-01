@@ -85,6 +85,9 @@ enum Command {
 
     /// 更新到最新版本
     Update,
+
+    /// 重置 admin 管理员密码
+    Passwd,
 }
 
 /// 应用状态
@@ -156,6 +159,11 @@ fn main() -> Result<()> {
         Command::Update => {
             update_binary()?;
         }
+
+        Command::Passwd => {
+            let runtime = tokio::runtime::Runtime::new()?;
+            runtime.block_on(reset_admin_password())?;
+        }
     }
 
     Ok(())
@@ -206,6 +214,11 @@ fn main() -> Result<()> {
         } => start_daemon_windows(&pid_file, &log_dir),
 
         Command::Update => update_binary(),
+
+        Command::Passwd => {
+            let runtime = tokio::runtime::Runtime::new()?;
+            runtime.block_on(reset_admin_password())
+        }
     }
 }
 
@@ -308,6 +321,65 @@ fn update_binary() -> Result<()> {
         self_update::Status::Updated(version) => {
             println!("✓ 成功更新到版本: v{}", version);
             println!("请重启 controller 服务以使用新版本");
+        }
+    }
+
+    Ok(())
+}
+
+/// 重置 admin 管理员密码
+async fn reset_admin_password() -> Result<()> {
+    use crate::entity::{user, User};
+
+    // 初始化数据库
+    let db = init_sqlite().await;
+    migration::Migrator::up(&db, None).await?;
+
+    // 查找 admin 用户
+    let admin = User::find()
+        .filter(user::Column::Username.eq("admin"))
+        .one(&db)
+        .await?;
+
+    match admin {
+        Some(admin_user) => {
+            // 生成新密码
+            let new_password = auth::generate_random_password(16);
+            let password_hash = auth::hash_password(&new_password)?;
+
+            let mut active: user::ActiveModel = admin_user.into();
+            active.password_hash = Set(password_hash);
+            active.updated_at = Set(Utc::now().naive_utc());
+            active.update(&db).await?;
+
+            println!("═══════════════════════════════════════════════════════════════");
+            println!("  Admin 密码已重置");
+            println!("═══════════════════════════════════════════════════════════════");
+            println!("  用户名: admin");
+            println!("  新密码: {}", new_password);
+            println!("═══════════════════════════════════════════════════════════════");
+            println!("  请妥善保存此密码，登录后建议及时修改！");
+            println!("═══════════════════════════════════════════════════════════════");
+
+            // 同步更新密码文件
+            let data_dir = PathBuf::from("./data");
+            if let Err(e) = fs::create_dir_all(&data_dir) {
+                eprintln!("无法创建 data 目录: {}", e);
+            } else {
+                let password_file = data_dir.join("admin_password.txt");
+                let content = format!(
+                    "Admin 密码（已重置）\n═══════════════════════════════════════\n用户名: admin\n密码: {}\n═══════════════════════════════════════\n⚠️ 请妥善保管此文件，登录后建议修改密码并删除此文件！\n",
+                    new_password
+                );
+                if let Err(e) = fs::write(&password_file, &content) {
+                    eprintln!("无法保存密码文件: {}", e);
+                } else {
+                    println!("  密码已保存到: {}", password_file.display());
+                }
+            }
+        }
+        None => {
+            println!("Admin 用户不存在，请先启动 controller 初始化数据库");
         }
     }
 
