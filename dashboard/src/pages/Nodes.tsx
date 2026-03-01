@@ -67,7 +67,9 @@ export default function Nodes() {
         if (res.success && res.data) {
           setLatestVersion(res.data.latestVersion);
         }
-      }).catch(() => {});
+      }).catch((err) => {
+        console.warn('获取最新版本信息失败:', err);
+      });
     }
   }, []);
 
@@ -218,23 +220,24 @@ export default function Nodes() {
       } else {
         showToast(response.data?.error || response.message || '更新失败', 'error');
       }
-    } catch {
-      showToast('请求失败', 'error');
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || '请求失败';
+      showToast(msg, 'error');
     } finally {
       setUpdatingNodeId(null);
     }
   };
 
   const handleBatchUpdate = () => {
-    const updatableCount = nodes.filter(n => n.isOnline && n.version && n.version !== latestVersion).length;
+    const updatableCount = nodes.filter(n => n.isOnline && n.version).length;
     if (updatableCount === 0) {
-      showToast('没有需要更新的在线节点', 'error');
+      showToast('没有可更新的在线节点', 'error');
       return;
     }
     setConfirmDialog({
       open: true,
       title: '批量更新节点',
-      message: `确定要更新所有在线节点 (${updatableCount} 个) 到最新版本 v${latestVersion} 吗？更新后节点将自动重启。`,
+      message: `确定要更新所有在线节点 (${updatableCount} 个) ${latestVersion ? `到最新版本 v${latestVersion}` : '到最新版本'}吗？更新后节点将自动重启。`,
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, open: false }));
         setBatchUpdating(true);
@@ -254,8 +257,9 @@ export default function Nodes() {
           } else {
             showToast(response.message || '批量更新失败', 'error');
           }
-        } catch {
-          showToast('批量更新请求失败', 'error');
+        } catch (err: any) {
+          const msg = err?.response?.data?.message || '批量更新请求失败';
+          showToast(msg, 'error');
         } finally {
           setBatchUpdating(false);
         }
@@ -478,7 +482,7 @@ export default function Nodes() {
         </div>
         {isAdmin && (
           <div className="flex items-center gap-2">
-            {latestVersion && nodes.some(n => n.isOnline && n.version && n.version !== latestVersion) && (
+            {nodes.some(n => n.isOnline && n.version) && (
               <button
                 onClick={handleBatchUpdate}
                 disabled={batchUpdating}
@@ -629,43 +633,52 @@ export default function Nodes() {
                       </span>
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
-                      {!node.version ? (
-                        <span className="text-xs text-muted-foreground">-</span>
-                      ) : node.version === latestVersion ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg" style={{ background: 'hsl(142 71% 45% / 0.12)', color: 'hsl(142 71% 45%)' }}>
-                          v{node.version}
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5">
+                        {!node.version ? (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        ) : node.version === latestVersion ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg" style={{ background: 'hsl(142 71% 45% / 0.12)', color: 'hsl(142 71% 45%)' }}>
+                            v{node.version}
+                          </span>
+                        ) : latestVersion ? (
                           <span className="inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-lg bg-amber-50 text-amber-700">
                             v{node.version}
                           </span>
-                          {isAdmin && node.isOnline && (
-                            <button
-                              onClick={() => handleNodeUpdate(node.id)}
-                              disabled={updatingNodeId === node.id}
-                              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-amber-600 hover:bg-amber-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {updatingNodeId === node.id ? (
-                                <>
-                                  <svg className="animate-spin w-3 h-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                  </svg>
-                                  更新中...
-                                </>
-                              ) : (
-                                <>
-                                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                                  </svg>
-                                  更新
-                                </>
-                              )}
-                            </button>
-                          )}
-                        </span>
-                      )}
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-lg bg-muted text-muted-foreground">
+                            v{node.version}
+                          </span>
+                        )}
+                        {isAdmin && node.isOnline && node.version && (
+                          <button
+                            onClick={() => handleNodeUpdate(node.id)}
+                            disabled={updatingNodeId === node.id}
+                            className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              node.version !== latestVersion && latestVersion
+                                ? 'text-amber-600 hover:bg-amber-50'
+                                : 'text-muted-foreground hover:bg-muted'
+                            }`}
+                            title={latestVersion ? `更新到 v${latestVersion}` : '重新安装当前版本'}
+                          >
+                            {updatingNodeId === node.id ? (
+                              <>
+                                <svg className="animate-spin w-3 h-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                更新中...
+                              </>
+                            ) : (
+                              <>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                </svg>
+                                {node.version !== latestVersion && latestVersion ? '更新' : '重装'}
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                       {formatDate(node.created_at)}

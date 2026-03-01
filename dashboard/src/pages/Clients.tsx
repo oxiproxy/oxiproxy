@@ -61,7 +61,9 @@ export default function Clients() {
         if (res.success && res.data) {
           setLatestVersion(res.data.latestVersion);
         }
-      }).catch(() => {});
+      }).catch((err) => {
+        console.warn('获取最新版本信息失败:', err);
+      });
     }
   }, []);
 
@@ -294,23 +296,24 @@ export default function Clients() {
       } else {
         showToast(response.data?.error || response.message || '更新失败', 'error');
       }
-    } catch {
-      showToast('请求失败', 'error');
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || '请求失败';
+      showToast(msg, 'error');
     } finally {
       setUpdatingClientId(null);
     }
   };
 
   const handleBatchUpdate = () => {
-    const updatableCount = clients.filter(c => c.is_online && c.version && c.version !== latestVersion).length;
+    const updatableCount = clients.filter(c => c.is_online && c.version).length;
     if (updatableCount === 0) {
-      showToast('没有需要更新的在线客户端', 'error');
+      showToast('没有可更新的在线客户端', 'error');
       return;
     }
     setConfirmDialog({
       open: true,
       title: '批量更新客户端',
-      message: `确定要更新所有在线客户端 (${updatableCount} 个) 到最新版本 v${latestVersion} 吗？更新后客户端将自动重启。`,
+      message: `确定要更新所有在线客户端 (${updatableCount} 个) ${latestVersion ? `到最新版本 v${latestVersion}` : '到最新版本'}吗？更新后客户端将自动重启。`,
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, open: false }));
         setBatchUpdating(true);
@@ -330,8 +333,9 @@ export default function Clients() {
           } else {
             showToast(response.message || '批量更新失败', 'error');
           }
-        } catch {
-          showToast('批量更新请求失败', 'error');
+        } catch (err: any) {
+          const msg = err?.response?.data?.message || '批量更新请求失败';
+          showToast(msg, 'error');
         } finally {
           setBatchUpdating(false);
         }
@@ -359,7 +363,7 @@ export default function Clients() {
           <p className="mt-1 text-sm text-muted-foreground">管理所有客户端连接</p>
         </div>
         <div className="flex items-center gap-2">
-          {latestVersion && clients.some(c => c.is_online && c.version && c.version !== latestVersion) && (
+          {clients.some(c => c.is_online && c.version) && (
             <button
               onClick={handleBatchUpdate}
               disabled={batchUpdating}
@@ -540,50 +544,52 @@ export default function Clients() {
                       </div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
-                      {!client.version ? (
-                        <span className="text-xs text-muted-foreground">-</span>
-                      ) : client.version === latestVersion ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg bg-green-50 text-green-700">
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          v{client.version}
-                        </span>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg bg-amber-50 text-amber-700">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                            </svg>
+                      <div className="flex items-center gap-2">
+                        {!client.version ? (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        ) : client.version === latestVersion ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg bg-green-50 text-green-700">
                             v{client.version}
                           </span>
-                          {client.is_online && latestVersion && (
-                            <button
-                              onClick={() => handleClientUpdate(client.id)}
-                              disabled={updatingClientId === client.id}
-                              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-amber-600 hover:bg-amber-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              title={`更新到 v${latestVersion}`}
-                            >
-                              {updatingClientId === client.id ? (
-                                <>
-                                  <svg className="animate-spin w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                  </svg>
-                                  更新中...
-                                </>
-                              ) : (
-                                <>
-                                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                                  </svg>
-                                  更新
-                                </>
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      )}
+                        ) : latestVersion ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg bg-amber-50 text-amber-700">
+                            v{client.version}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-lg bg-muted text-muted-foreground">
+                            v{client.version}
+                          </span>
+                        )}
+                        {client.is_online && client.version && (
+                          <button
+                            onClick={() => handleClientUpdate(client.id)}
+                            disabled={updatingClientId === client.id}
+                            className={`inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                              client.version !== latestVersion && latestVersion
+                                ? 'text-amber-600 hover:bg-amber-50'
+                                : 'text-muted-foreground hover:bg-muted'
+                            }`}
+                            title={latestVersion ? `更新到 v${latestVersion}` : '重新安装当前版本'}
+                          >
+                            {updatingClientId === client.id ? (
+                              <>
+                                <svg className="animate-spin w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                更新中...
+                              </>
+                            ) : (
+                              <>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                </svg>
+                                {client.version !== latestVersion && latestVersion ? '更新' : '重装'}
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                       {formatDate(client.created_at)}

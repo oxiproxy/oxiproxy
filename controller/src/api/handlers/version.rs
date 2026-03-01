@@ -38,6 +38,7 @@ struct GitHubRelease {
 async fn fetch_latest_release() -> anyhow::Result<CachedRelease> {
     let client = reqwest::Client::builder()
         .user_agent("OxiProxy-Controller")
+        .timeout(std::time::Duration::from_secs(15))
         .build()?;
 
     let resp: GitHubRelease = client
