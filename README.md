@@ -6,9 +6,9 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-2021_Edition-orange.svg)](https://www.rust-lang.org/)
-[![QUIC](https://img.shields.io/badge/Protocol-QUIC%2FKCP-blue.svg)](https://quicwg.org/)
+[![QUIC](https://img.shields.io/badge/Protocol-QUIC%2FKCP%2FTCP-blue.svg)](https://quicwg.org/)
 
-一个现代化的内网穿透解决方案，采用 Rust + QUIC/KCP + React 技术栈，提供三层架构的高性能反向代理服务。
+一个现代化的内网穿透解决方案，采用 Rust + QUIC/KCP/TCP + React 技术栈，提供三层架构的高性能反向代理服务。
 
 [特性](#-特性) | [快速开始](#-快速开始) | [安装教程](#-安装教程) | [配置说明](#-配置说明) | [Web 管理界面](#-web-管理界面) | [架构](#-架构)
 
@@ -18,12 +18,14 @@
 
 | 特性 | 说明 |
 |------|------|
-| **高性能** | 基于 Rust + QUIC/KCP 协议，低延迟、高并发 |
+| **高性能** | 基于 Rust + QUIC/KCP/TCP 协议，低延迟、高并发 |
 | **安全可靠** | TLS 加密传输，Token/JWT 认证机制 |
 | **三层架构** | Controller + Node + Client 灵活部署 |
 | **跨平台** | 支持 Linux、Windows、macOS (amd64/arm64) |
 | **易于使用** | Web 可视化管理界面 + 简洁命令行配置 |
+| **多协议** | 支持 QUIC（默认）、KCP、TCP 三种隧道协议，适配不同网络环境 |
 | **自动重连** | 客户端/节点断线自动重连，服务稳定 |
+| **自动更新** | 支持远程自动更新所有组件，运维便捷 |
 | **流量管控** | 实时流量统计，支持用户配额管理 |
 | **多用户** | 支持多用户、多节点、多客户端、多隧道管理 |
 | **订阅套餐** | 支持订阅套餐，灵活分配节点和流量配额 |
@@ -33,9 +35,9 @@
 
 **Controller（控制器）**：Web 管理界面、RESTful API、gRPC 服务、SQLite 持久化、JWT 认证、流量统计、用户权限管理、订阅套餐、在线状态监控
 
-**Node（节点服务器）**：QUIC/KCP 隧道服务、gRPC 连接 Controller、流量记录与批量上报、内存日志缓冲
+**Node（节点服务器）**：QUIC/KCP/TCP 隧道服务、gRPC 连接 Controller、流量记录与批量上报、内存日志缓冲、自动更新
 
-**Client（客户端）**：gRPC 连接 Controller、TCP/UDP 代理、多隧道并发、自动重连、Windows 服务模式、Unix 守护进程模式
+**Client（客户端）**：gRPC 连接 Controller、TCP/UDP 代理、多隧道并发、自动重连、Windows 服务模式、Unix 守护进程模式、自动更新
 
 **Dashboard（Web 界面）**：React 19 + TypeScript + shadcn/ui + Tailwind CSS 4，仪表盘、用户管理、客户端管理、节点管理、隧道管理、流量统计、订阅套餐管理
 
@@ -132,13 +134,35 @@ sc stop OxiProxyClient
 
 ## 安装教程
 
-OxiProxy 提供三种安装方式：
+OxiProxy 提供四种安装方式：
 
 | 方式 | 适用场景 | 难度 |
 |------|---------|------|
+| [一键安装脚本](#一键安装脚本) | Linux/macOS 快速部署 | * |
 | [Docker Compose](#docker-compose-安装推荐) | 生产环境，推荐 | * |
 | [Docker](#docker-安装) | 熟悉 Docker 的用户 | ** |
 | [原生安装](#原生安装) | 自定义编译或无 Docker 环境 | *** |
+
+### 一键安装脚本
+
+适用于 Linux 和 macOS，支持镜像加速（国内服务器友好）：
+
+```bash
+# 交互式安装（自动选择最快镜像）
+curl -fsSL https://raw.githubusercontent.com/oxiproxy/oxiproxy/master/install.sh | bash
+
+# 或下载后手动运行（可自定义参数）
+curl -O https://raw.githubusercontent.com/oxiproxy/oxiproxy/master/install.sh
+chmod +x install.sh
+./install.sh
+```
+
+脚本功能：
+
+- 交互式选择安装组件（controller / node / client）
+- 自动检测系统架构（x86_64 / ARM64）
+- 多个下载镜像源自动切换（GitHub、ghfast.top、gh-proxy.com、ghproxy.cc）
+- 支持指定版本号和安装目录
 
 ### Docker Compose 安装（推荐）
 
@@ -181,12 +205,14 @@ docker compose logs controller
 sudo ufw allow 3000/tcp   # Web 界面
 sudo ufw allow 3100/tcp   # gRPC 服务（Node/Client 连接用）
 sudo ufw allow 7000/udp   # QUIC/KCP 隧道端口
+sudo ufw allow 7000/tcp   # TCP 隧道端口（可选）
 sudo ufw reload
 
 # CentOS/RHEL (firewalld)
 sudo firewall-cmd --permanent --add-port=3000/tcp
 sudo firewall-cmd --permanent --add-port=3100/tcp
 sudo firewall-cmd --permanent --add-port=7000/udp
+sudo firewall-cmd --permanent --add-port=7000/tcp  # TCP 隧道（可选）
 sudo firewall-cmd --reload
 ```
 
@@ -231,11 +257,13 @@ docker logs -f oxiproxy-controller  # 获取 admin 初始密码
 
 ```bash
 docker run -d --name oxiproxy-node --restart unless-stopped \
-  -p 7000:7000/udp \
+  -p 7000:7000/udp -p 7000:7000/tcp \
   -e TZ=Asia/Shanghai -e RUST_LOG=info,tokio_kcp=off \
   ghcr.io/oxiproxy/oxiproxy:latest \
   /app/node --controller-url http://your-controller-ip:3100 --token your-node-token --bind-port 7000
 ```
+
+> **提示**: Node 默认使用 QUIC (UDP) 协议，如果客户端使用 TCP 隧道协议，需同时放行 7000/tcp 端口。
 
 </details>
 
@@ -352,7 +380,7 @@ sudo systemctl enable --now oxiproxy-node
 |------|------|------|------|
 | 3000 | TCP | Controller | Web 管理界面 |
 | 3100 | TCP | Controller | gRPC 服务（Node/Client 连接） |
-| 7000 | UDP | Node | QUIC/KCP 隧道服务 |
+| 7000 | UDP/TCP | Node | QUIC/KCP (UDP) 或 TCP 隧道服务 |
 
 ### Controller 配置
 
@@ -382,7 +410,7 @@ Controller 配置按以下优先级加载：环境变量 → 数据库 SystemCon
 |------|------|------|
 | `--controller-url` | Controller gRPC 地址（如 `http://server:3100`） | 是 |
 | `--token` | 节点认证令牌 | 是 |
-| `--bind-port` | QUIC/KCP 监听端口 | 是 |
+| `--bind-port` | QUIC/KCP/TCP 监听端口 | 是 |
 | `--daemon` | 守护进程模式（仅 Unix） | 否 |
 
 ## Web 管理界面
@@ -451,7 +479,7 @@ Controller 提供 RESTful API，前缀为 `/api`：
 │                                        │                         │
 │                                        ├──gRPC Stream──> Node    │
 │                                        │                  │      │
-│                                        │              QUIC/KCP   │
+│                                        │              QUIC/KCP/TCP   │
 │                                        │                  │      │
 │  本地服务 <──TCP/UDP── Client <──gRPC Stream──┘         公网服务  │
 │                                                                  │
@@ -467,7 +495,7 @@ Controller 提供 RESTful API，前缀为 `/api`：
 | 组件 | 说明 |
 |------|------|
 | **Controller** | 中央控制器，提供 Web 管理界面、RESTful API 和 gRPC 服务，管理所有节点和客户端 |
-| **Node** | 节点服务器，提供 QUIC/KCP 隧道服务，通过 gRPC 注册到 Controller |
+| **Node** | 节点服务器，提供 QUIC/KCP/TCP 隧道服务，通过 gRPC 注册到 Controller |
 | **Client** | 客户端，通过 gRPC 连接 Controller 获取配置，建立到 Node 的隧道连接 |
 | **Dashboard** | React 19 + TypeScript + shadcn/ui 前端管理界面 |
 
@@ -476,7 +504,7 @@ Controller 提供 RESTful API，前缀为 `/api`：
 **后端：**
 - [Rust](https://www.rust-lang.org/) 2021 Edition - 系统编程语言
 - [quinn](https://github.com/quinn-rs/quinn) - QUIC 协议实现
-- [tokio-kcp](https://github.com/Matrix-Zhang/tokio_kcp) + [yamux](https://github.com/libp2p/rust-yamux) - KCP 协议 + 多路复用
+- [tokio-kcp](https://github.com/Matrix-Zhang/tokio_kcp) + [yamux](https://github.com/libp2p/rust-yamux) - KCP/TCP 协议 + 多路复用
 - [tokio](https://tokio.rs/) - 异步运行时
 - [tonic](https://github.com/hyperium/tonic) - gRPC 框架
 - [axum](https://github.com/tokio-rs/axum) - Web 框架
@@ -551,6 +579,7 @@ git push origin v1.0.0
 ## 安全性
 
 - **TLS 加密**：QUIC 协议内置 TLS 加密，隧道通信安全
+- **多路复用**：KCP 和 TCP 隧道使用 yamux 多路复用，TCP 隧道适用于 UDP 受限网络
 - **Token 认证**：Node 和 Client 使用 Token 进行身份验证
 - **JWT 认证**：Web 界面使用 JWT 进行用户认证
 - **密码加密**：用户密码使用 bcrypt 加密存储
