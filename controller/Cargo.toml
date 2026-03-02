@@ -33,6 +33,7 @@ base64 = "0.22"
 prost = "0.13"
 clap = { version = "4.5", features = ["derive"] }
 self_update = { version = "0.41", features = ["archive-tar", "archive-zip", "compression-flate2"] }
+tempfile = "3"
 
 # Daemon (Unix only)
 [target.'cfg(unix)'.dependencies]

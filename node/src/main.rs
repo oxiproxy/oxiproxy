@@ -385,27 +385,73 @@ fn stop_daemon_windows(pid_file: &str) -> anyhow::Result<()> {
 fn update_binary() -> anyhow::Result<()> {
     println!("正在检查更新...");
 
-    let status = self_update::backends::github::Update::configure()
+    let bin_name = "node";
+    let current_version = env!("CARGO_PKG_VERSION");
+    let target = self_update::get_target();
+
+    // 获取最新 release
+    let releases = self_update::backends::github::ReleaseList::configure()
         .repo_owner("oxiproxy")
         .repo_name("oxiproxy")
-        .bin_name("node")
-        .identifier("node")
-        .bin_path_in_archive("{bin}{bin_ext}")
-        .show_download_progress(true)
-        .current_version(env!("CARGO_PKG_VERSION"))
-        .no_confirm(true)
         .build()?
-        .update()?;
+        .fetch()?;
 
-    match status {
-        self_update::Status::UpToDate(version) => {
-            println!("✓ 已是最新版本: v{}", version);
-        }
-        self_update::Status::Updated(version) => {
-            println!("✓ 成功更新到版本: v{}", version);
-            println!("请重启 node 服务以使用新版本");
-        }
+    let latest = releases
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("未找到任何 release"))?;
+
+    if !self_update::version::bump_is_compatible(current_version, &latest.version)? {
+        println!("最新版本 v{} 与当前版本 v{} 不兼容", latest.version, current_version);
+        return Ok(());
     }
+
+    if !self_update::version::bump_is_greater(current_version, &latest.version)? {
+        println!("✓ 已是最新版本: v{}", current_version);
+        return Ok(());
+    }
+
+    // 手动筛选 asset：必须同时包含组件名和 target
+    let asset = latest
+        .assets
+        .iter()
+        .find(|a| a.name.contains(bin_name) && a.name.contains(target))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "未找到匹配的 release asset (bin={}, target={})",
+                bin_name,
+                target
+            )
+        })?;
+
+    println!("当前版本: v{}", current_version);
+    println!("最新版本: v{}", latest.version);
+    println!("下载: {}", asset.name);
+
+    // 下载到临时文件
+    let tmp_dir = tempfile::TempDir::new()?;
+    let tmp_archive_path = tmp_dir.path().join(&asset.name);
+    let mut tmp_archive = std::fs::File::create(&tmp_archive_path)?;
+
+    let mut download = self_update::Download::from_url(&asset.download_url);
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::ACCEPT,
+        "application/octet-stream".parse().unwrap(),
+    );
+    download.set_headers(headers);
+    download.show_progress(true);
+    download.download_to(&mut tmp_archive)?;
+
+    // 解压并替换二进制
+    let bin_path_in_archive = format!("{}{}", bin_name, std::env::consts::EXE_SUFFIX);
+    self_update::Extract::from_source(&tmp_archive_path)
+        .extract_file(tmp_dir.path(), &bin_path_in_archive)?;
+
+    let new_exe = tmp_dir.path().join(&bin_path_in_archive);
+    self_update::self_replace::self_replace(&new_exe)?;
+
+    println!("✓ 成功更新到版本: v{}", latest.version);
+    println!("请重启 node 服务以使用新版本");
 
     Ok(())
 }
