@@ -224,7 +224,7 @@ async fn message_loop(
                 if success {
                     info!("软件更新成功，3秒后重启...");
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                    std::process::exit(0);
+                    restart_self();
                 }
             }
 
@@ -302,6 +302,78 @@ fn convert_server_groups(
             }
         })
         .collect()
+}
+
+/// 重启当前进程（用于自更新后重启）
+///
+/// - Unix: 使用 exec 替换当前进程（保持 PID 不变，适用于 daemon 模式）
+/// - Windows: 启动新的分离进程后退出
+fn restart_self() -> ! {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            error!("无法获取当前可执行文件路径: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let original_args: Vec<String> = std::env::args().collect();
+
+    // 构建重启参数：将 "daemon" 替换为 "start"，过滤掉 daemon 特有的 --pid-file 参数
+    let mut restart_args: Vec<String> = Vec::new();
+    let mut skip_next = false;
+
+    for (i, arg) in original_args.iter().enumerate().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        // 第一个参数是子命令，daemon -> start（已在 daemon 上下文中，无需再次 fork）
+        if i == 1 && arg == "daemon" {
+            restart_args.push("start".to_string());
+            continue;
+        }
+
+        // 跳过 daemon 特有的 --pid-file 参数及其值
+        if arg == "--pid-file" {
+            skip_next = true;
+            continue;
+        }
+        if arg.starts_with("--pid-file=") {
+            continue;
+        }
+
+        restart_args.push(arg.clone());
+    }
+
+    info!("重启进程: {:?} {:?}", exe, restart_args);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // exec 替换当前进程，保持 PID 不变
+        let err = std::process::Command::new(&exe).args(&restart_args).exec();
+        error!("exec 重启失败: {}", err);
+        std::process::exit(1);
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        match std::process::Command::new(&exe)
+            .args(&restart_args)
+            .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+            .spawn()
+        {
+            Ok(child) => info!("新进程已启动 (PID: {})", child.id()),
+            Err(e) => error!("重启失败: {}", e),
+        }
+        std::process::exit(0);
+    }
 }
 
 /// 执行客户端自更新（阻塞操作，需在 spawn_blocking 中调用）
