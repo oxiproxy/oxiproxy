@@ -148,10 +148,14 @@ pub fn start_web_server(app_state: AppState) -> tokio::task::JoinHandle<()> {
 
         // 尝试加载 TLS 配置
         if let Some(tls_config) = load_web_tls_config(&config_manager).await {
-            // 使用 HTTPS（同时支持 HTTP 自动重定向到 HTTPS）
+            // 读取是否开启 HTTP→HTTPS 自动跳转（反向代理场景下应关闭）
+            let force_https = config_manager.get_bool("web_tls_force_https", true).await;
             info!("🌐 Web管理界面: https://{}", web_addr);
+            if !force_https {
+                info!("HTTP→HTTPS 自动跳转已关闭（适用于反向代理部署）");
+            }
             match axum_server_dual_protocol::bind_dual_protocol(web_addr.parse().unwrap(), tls_config)
-                .set_upgrade(true)
+                .set_upgrade(force_https)
                 .serve(app.into_make_service())
                 .await
             {

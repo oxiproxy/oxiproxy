@@ -28,7 +28,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (storedToken && storedUser) {
         try {
           // 验证token是否仍然有效
-          const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3000/api'}/auth/me`, {
+          const response = await fetch(`${import.meta.env.VITE_API_URL || '/api'}/auth/me`, {
             headers: {
               'Authorization': `Bearer ${storedToken}`,
             },
