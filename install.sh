@@ -11,6 +11,7 @@ DEFAULT_DIR="/opt/oxiproxy"
 INSTALL_DIR=""
 COMPONENTS=()
 VERSION=""
+MODE=""
 ALL_COMPONENTS=(controller node client)
 
 # 下载源：名称 | API 地址模板 | 文件下载地址模板
@@ -172,8 +173,8 @@ select_mode() {
     read -rp "$(echo -e "${BOLD}输入编号: ${NC}")" choice </dev/tty
 
     case "$choice" in
-        1) echo "install" ;;
-        2) echo "update" ;;
+        1) MODE="install" ;;
+        2) MODE="update" ;;
         *) error "无效选项" ;;
     esac
 }
@@ -434,14 +435,13 @@ do_install() {
 main() {
     show_banner
 
-    local mode
-    mode=$(select_mode)
+    select_mode
     echo ""
 
     select_mirror
     echo ""
 
-    case "$mode" in
+    case "$MODE" in
         install)
             select_components
             select_install_dir
