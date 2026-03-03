@@ -88,7 +88,7 @@ select_mirror() {
     echo ""
 
     local choice
-    read -rp "$(echo -e "${BOLD}输入编号${NC} ${DIM}[默认: ${idx} 自动检测]${NC}${BOLD}: ${NC}")" choice
+    read -rp "$(echo -e "${BOLD}输入编号${NC} ${DIM}[默认: ${idx} 自动检测]${NC}${BOLD}: ${NC}")" choice </dev/tty
     choice="${choice:-$idx}"
 
     # 自动检测
@@ -169,7 +169,7 @@ select_mode() {
     echo ""
 
     local choice
-    read -rp "$(echo -e "${BOLD}输入编号: ${NC}")" choice
+    read -rp "$(echo -e "${BOLD}输入编号: ${NC}")" choice </dev/tty
 
     case "$choice" in
         1) echo "install" ;;
@@ -189,7 +189,7 @@ select_components() {
     echo ""
 
     local choices
-    read -rp "$(echo -e "${BOLD}输入编号（多选用空格分隔，如 1 2）: ${NC}")" choices
+    read -rp "$(echo -e "${BOLD}输入编号（多选用空格分隔，如 1 2）: ${NC}")" choices </dev/tty
 
     [[ -z "$choices" ]] && error "未选择任何组件"
 
@@ -247,7 +247,7 @@ select_update_components() {
     echo ""
 
     local choices
-    read -rp "$(echo -e "${BOLD}选择要更新的组件: ${NC}")" choices
+    read -rp "$(echo -e "${BOLD}选择要更新的组件: ${NC}")" choices </dev/tty
 
     [[ -z "$choices" ]] && error "未选择任何组件"
 
@@ -279,14 +279,14 @@ select_update_components() {
 # ─── 输入安装目录 ──────────────────────────────────────
 select_install_dir() {
     echo ""
-    read -rp "$(echo -e "${BOLD}安装目录${NC} ${DIM}[默认: ${DEFAULT_DIR}]${NC}${BOLD}: ${NC}")" input_dir
+    read -rp "$(echo -e "${BOLD}安装目录${NC} ${DIM}[默认: ${DEFAULT_DIR}]${NC}${BOLD}: ${NC}")" input_dir </dev/tty
     INSTALL_DIR="${input_dir:-$DEFAULT_DIR}"
 }
 
 # ─── 输入版本 ─────────────────────────────────────────
 select_version() {
     echo ""
-    read -rp "$(echo -e "${BOLD}指定版本${NC} ${DIM}[留空使用最新版]${NC}${BOLD}: ${NC}")" input_version
+    read -rp "$(echo -e "${BOLD}指定版本${NC} ${DIM}[留空使用最新版]${NC}${BOLD}: ${NC}")" input_version </dev/tty
     VERSION="${input_version}"
 }
 
@@ -394,7 +394,7 @@ confirm() {
     echo -e "${BOLD}────────────────────────────────${NC}"
     echo ""
 
-    read -rp "$(echo -e "${BOLD}确认？${NC} ${DIM}[Y/n]${NC} ")" yn
+    read -rp "$(echo -e "${BOLD}确认？${NC} ${DIM}[Y/n]${NC} ")" yn </dev/tty
     case "${yn:-Y}" in
         [Yy]*) ;;
         *)     echo "已取消"; exit 0 ;;
@@ -461,7 +461,7 @@ main() {
             ;;
 
         update)
-            read -rp "$(echo -e "${BOLD}已安装目录${NC} ${DIM}[默认: ${DEFAULT_DIR}]${NC}${BOLD}: ${NC}")" input_dir
+            read -rp "$(echo -e "${BOLD}已安装目录${NC} ${DIM}[默认: ${DEFAULT_DIR}]${NC}${BOLD}: ${NC}")" input_dir </dev/tty
             INSTALL_DIR="${input_dir:-$DEFAULT_DIR}"
 
             if ! detect_installed "$INSTALL_DIR"; then
