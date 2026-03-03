@@ -211,7 +211,9 @@ select_components() {
     done
     COMPONENTS=("${unique[@]}")
 
-    [[ ${#COMPONENTS[@]} -eq 0 ]] && error "未选择任何有效组件"
+    if [[ ${#COMPONENTS[@]} -eq 0 ]]; then
+        error "未选择任何有效组件"
+    fi
 }
 
 # ─── 选择要更新的组件（基于已安装） ──────────────────────────
@@ -274,7 +276,9 @@ select_update_components() {
     done
     COMPONENTS=("${unique[@]}")
 
-    [[ ${#COMPONENTS[@]} -eq 0 ]] && error "未选择任何有效组件"
+    if [[ ${#COMPONENTS[@]} -eq 0 ]]; then
+        error "未选择任何有效组件"
+    fi
 }
 
 # ─── 输入安装目录 ──────────────────────────────────────
@@ -377,7 +381,9 @@ install_component() {
 
     local ver_output
     ver_output=$("${INSTALL_DIR}/${component}" --version 2>/dev/null || true)
-    [[ -n "$ver_output" ]] && info "版本: ${ver_output}"
+    if [[ -n "$ver_output" ]]; then
+        info "版本: ${ver_output}"
+    fi
 }
 
 # ─── 确认操作 ──────────────────────────────────────────
