@@ -75,7 +75,7 @@ select_mirror() {
 
     local idx=0
     for m in "${MIRRORS[@]}"; do
-        ((idx++))
+        ((++idx))
         local name="${m%%|*}"
         if [[ $idx -eq 1 ]]; then
             echo -e "  ${CYAN}${idx})${NC} ${name}"
@@ -84,7 +84,7 @@ select_mirror() {
         fi
     done
 
-    ((idx++))
+    ((++idx))
     echo -e "  ${CYAN}${idx})${NC} 自动检测 ${DIM}(逐个尝试，选最快的)${NC}"
     echo ""
 
@@ -154,7 +154,7 @@ detect_installed() {
 
     for comp in "${ALL_COMPONENTS[@]}"; do
         if [[ -x "${dir}/${comp}" ]]; then
-            ((found++))
+            ((++found))
         fi
     done
 
@@ -227,7 +227,7 @@ select_update_components() {
     for comp in "${ALL_COMPONENTS[@]}"; do
         local bin="${dir}/${comp}"
         if [[ -x "$bin" ]]; then
-            ((idx++))
+            ((++idx))
             installed+=("$comp")
             local ver
             ver=$(get_installed_version "$bin")
@@ -242,7 +242,7 @@ select_update_components() {
     fi
 
     if [[ ${#installed[@]} -gt 1 ]]; then
-        ((idx++))
+        ((++idx))
         echo -e "  ${CYAN}${idx})${NC} 全部更新"
     fi
     echo ""
@@ -410,9 +410,9 @@ do_install() {
     local success=0 failed=0
     for component in "${COMPONENTS[@]}"; do
         if install_component "$component" "$target" "$VERSION"; then
-            ((success++))
+            ((++success))
         else
-            ((failed++))
+            ((++failed))
             warn "${component} 安装失败"
         fi
         echo ""
