@@ -31,8 +31,18 @@ pub struct UpdateConfigRequest {
     pub value: serde_json::Value,
 }
 
-/// 获取所有系统配置
-pub async fn get_configs() -> Json<ApiResponse<ConfigListResponse>> {
+/// 获取所有系统配置（仅管理员）
+pub async fn get_configs(
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
+) -> Json<ApiResponse<ConfigListResponse>> {
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return ApiResponse::error("未登录".to_string()),
+    };
+    if !auth_user.is_admin {
+        return ApiResponse::error("需要管理员权限".to_string());
+    }
+
     let db = get_connection().await;
 
     match SystemConfig::find().all(db).await {
@@ -57,11 +67,20 @@ pub async fn get_configs() -> Json<ApiResponse<ConfigListResponse>> {
     }
 }
 
-/// 更新系统配置
+/// 更新系统配置（仅管理员）
 pub async fn update_config(
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
     Extension(app_state): Extension<AppState>,
     Json(payload): Json<UpdateConfigRequest>,
 ) -> Json<ApiResponse<ConfigItem>> {
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return ApiResponse::error("未登录".to_string()),
+    };
+    if !auth_user.is_admin {
+        return ApiResponse::error("需要管理员权限".to_string());
+    }
+
     let config_manager = &app_state.config_manager;
     let db = get_connection().await;
 
@@ -140,9 +159,18 @@ pub struct BatchUpdateConfigRequest {
 }
 
 pub async fn batch_update_configs(
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
     Extension(app_state): Extension<AppState>,
     Json(payload): Json<BatchUpdateConfigRequest>,
 ) -> Json<ApiResponse<ConfigListResponse>> {
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return ApiResponse::error("未登录".to_string()),
+    };
+    if !auth_user.is_admin {
+        return ApiResponse::error("需要管理员权限".to_string());
+    }
+
     let config_manager = &app_state.config_manager;
     let db = get_connection().await;
     let mut updated_items = Vec::new();

@@ -80,10 +80,13 @@ pub struct UpdateUserRequest {
 
 /// GET /api/users - Get all users (admin only)
 pub async fn list_users(Extension(auth_user_opt): Extension<Option<AuthUser>>) -> impl IntoResponse {
-    let _auth_user = match auth_user_opt {
+    let auth_user = match auth_user_opt {
         Some(user) => user,
         None => return (StatusCode::UNAUTHORIZED, ApiResponse::<Vec<UserWithNodeCount>>::error("Not authenticated".to_string())),
     };
+    if !auth_user.is_admin {
+        return (StatusCode::FORBIDDEN, ApiResponse::<Vec<UserWithNodeCount>>::error("需要管理员权限".to_string()));
+    }
     let db = get_connection().await;
 
     match User::find().all(db).await {
@@ -170,10 +173,13 @@ pub async fn create_user(
     Extension(auth_user_opt): Extension<Option<AuthUser>>,
     Json(req): Json<CreateUserRequest>,
 ) -> impl IntoResponse {
-    let _auth_user = match auth_user_opt {
+    let auth_user = match auth_user_opt {
         Some(user) => user,
         None => return (StatusCode::UNAUTHORIZED, ApiResponse::<serde_json::Value>::error("Not authenticated".to_string())),
     };
+    if !auth_user.is_admin {
+        return (StatusCode::FORBIDDEN, ApiResponse::<serde_json::Value>::error("需要管理员权限".to_string()));
+    }
     // Check if username already exists
     let db = get_connection().await;
     match User::find()
@@ -261,10 +267,13 @@ pub async fn update_user(
     Path(id): Path<i64>,
     Json(req): Json<UpdateUserRequest>,
 ) -> impl IntoResponse {
-    let _auth_user = match auth_user_opt {
+    let auth_user = match auth_user_opt {
         Some(user) => user,
         None => return (StatusCode::UNAUTHORIZED, ApiResponse::<serde_json::Value>::error("Not authenticated".to_string())),
     };
+    if !auth_user.is_admin {
+        return (StatusCode::FORBIDDEN, ApiResponse::<serde_json::Value>::error("需要管理员权限".to_string()));
+    }
     let db = get_connection().await;
 
     // Find user
@@ -407,10 +416,13 @@ pub async fn update_user(
 
 /// DELETE /api/users/:id - Delete a user (admin only)
 pub async fn delete_user(Extension(auth_user_opt): Extension<Option<AuthUser>>, Path(id): Path<i64>) -> impl IntoResponse {
-    let _auth_user = match auth_user_opt {
+    let auth_user = match auth_user_opt {
         Some(user) => user,
         None => return (StatusCode::UNAUTHORIZED, ApiResponse::<&str>::error("Not authenticated".to_string())),
     };
+    if !auth_user.is_admin {
+        return (StatusCode::FORBIDDEN, ApiResponse::<&str>::error("需要管理员权限".to_string()));
+    }
     let db = get_connection().await;
 
     match User::delete_by_id(id).exec(db).await {
@@ -424,10 +436,13 @@ pub async fn delete_user(Extension(auth_user_opt): Extension<Option<AuthUser>>, 
 
 /// GET /api/users/:id/nodes - Get user's node list (admin only)
 pub async fn get_user_nodes(Extension(auth_user_opt): Extension<Option<AuthUser>>, Path(user_id): Path<i64>) -> impl IntoResponse {
-    let _auth_user = match auth_user_opt {
+    let auth_user = match auth_user_opt {
         Some(user) => user,
         None => return (StatusCode::UNAUTHORIZED, ApiResponse::<Vec<crate::entity::node::Model>>::error("Not authenticated".to_string())),
     };
+    if !auth_user.is_admin {
+        return (StatusCode::FORBIDDEN, ApiResponse::<Vec<crate::entity::node::Model>>::error("需要管理员权限".to_string()));
+    }
     let db = get_connection().await;
 
     match UserNode::find()
@@ -459,10 +474,13 @@ pub async fn assign_node_to_user(
     Extension(auth_user_opt): Extension<Option<AuthUser>>,
     Path((user_id, node_id)): Path<(i64, i64)>,
 ) -> impl IntoResponse {
-    let _auth_user = match auth_user_opt {
+    let auth_user = match auth_user_opt {
         Some(user) => user,
         None => return (StatusCode::UNAUTHORIZED, ApiResponse::<&str>::error("Not authenticated".to_string())),
     };
+    if !auth_user.is_admin {
+        return (StatusCode::FORBIDDEN, ApiResponse::<&str>::error("需要管理员权限".to_string()));
+    }
     let db = get_connection().await;
 
     // Check if user exists
@@ -582,10 +600,13 @@ pub async fn remove_node_from_user(
     Extension(auth_user_opt): Extension<Option<AuthUser>>,
     Path((user_id, node_id)): Path<(i64, i64)>,
 ) -> impl IntoResponse {
-    let _auth_user = match auth_user_opt {
+    let auth_user = match auth_user_opt {
         Some(user) => user,
         None => return (StatusCode::UNAUTHORIZED, ApiResponse::<&str>::error("Not authenticated".to_string())),
     };
+    if !auth_user.is_admin {
+        return (StatusCode::FORBIDDEN, ApiResponse::<&str>::error("需要管理员权限".to_string()));
+    }
     let db = get_connection().await;
 
     match UserNode::delete_many()

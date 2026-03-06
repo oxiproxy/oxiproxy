@@ -144,29 +144,35 @@ pub async fn create_client(
     }
 }
 
-pub async fn get_client(Path(id): Path<i64>, Extension(_auth_user): Extension<Option<AuthUser>>) -> impl IntoResponse {
+pub async fn get_client(Path(id): Path<i64>, Extension(auth_user_opt): Extension<Option<AuthUser>>) -> impl IntoResponse {
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return (StatusCode::UNAUTHORIZED, ApiResponse::<crate::entity::client::Model>::error("Not authenticated".to_string())),
+    };
+
     let db = get_connection().await;
-    match Client::find_by_id(id).one(db).await {
-        Ok(Some(client)) => (StatusCode::OK, ApiResponse::success(client)),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            ApiResponse::<crate::entity::client::Model>::error("Client not found".to_string()),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            ApiResponse::<crate::entity::client::Model>::error(format!(
-                "Failed to get client: {}",
-                e
-            )),
-        ),
+    match super::verify_client_ownership(&auth_user, id, db).await {
+        Ok(client) => (StatusCode::OK, ApiResponse::success(client)),
+        Err((status, msg)) => (status, ApiResponse::<crate::entity::client::Model>::error(msg)),
     }
 }
 
 pub async fn delete_client(
     Path(id): Path<i64>,
-    Extension(_auth_user): Extension<Option<AuthUser>>,
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
 ) -> impl IntoResponse {
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return (StatusCode::UNAUTHORIZED, ApiResponse::<&str>::error("Not authenticated".to_string())),
+    };
+
     let db = get_connection().await;
+
+    // 校验归属权
+    if let Err((status, msg)) = super::verify_client_ownership(&auth_user, id, db).await {
+        return (status, ApiResponse::<&str>::error(msg));
+    }
+
     match Client::delete_by_id(id).exec(db).await {
         Ok(_) => (StatusCode::OK, ApiResponse::success("Client deleted successfully")),
         Err(e) => (
@@ -323,14 +329,18 @@ pub struct ClientTrafficInfo {
 
 pub async fn get_client_traffic(
     Path(client_id): Path<i64>,
-    Extension(_auth_user): Extension<Option<AuthUser>>,
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
 ) -> impl IntoResponse {
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return (StatusCode::UNAUTHORIZED, ApiResponse::<ClientTrafficInfo>::error("Not authenticated".to_string())),
+    };
+
     let db = get_connection().await;
 
-    let client = match Client::find_by_id(client_id).one(db).await {
-        Ok(Some(c)) => c,
-        Ok(None) => return (StatusCode::NOT_FOUND, ApiResponse::<ClientTrafficInfo>::error("客户端不存在".to_string())),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<ClientTrafficInfo>::error(format!("查询失败: {}", e))),
+    let client = match super::verify_client_ownership(&auth_user, client_id, db).await {
+        Ok(c) => c,
+        Err((status, msg)) => return (status, ApiResponse::<ClientTrafficInfo>::error(msg)),
     };
 
     let remaining_quota_gb = crate::traffic_limiter::calculate_client_remaining_quota(&client);

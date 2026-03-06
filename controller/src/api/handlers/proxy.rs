@@ -422,13 +422,23 @@ pub async fn create_proxy(
 
 pub async fn update_proxy(
     Path(id): Path<i64>,
-    Extension(_auth_user): Extension<Option<AuthUser>>,
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
     Extension(app_state): Extension<AppState>,
     Json(req): Json<UpdateProxyRequest>,
 ) -> impl IntoResponse {
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return (StatusCode::UNAUTHORIZED, ApiResponse::<crate::entity::proxy::Model>::error("Not authenticated".to_string())),
+    };
+
     let db = get_connection().await;
     match Proxy::find_by_id(id).one(db).await {
         Ok(Some(proxy)) => {
+            // 校验归属权
+            if let Err((status, msg)) = super::verify_proxy_ownership(&auth_user, &proxy, db).await {
+                return (status, ApiResponse::<crate::entity::proxy::Model>::error(msg));
+            }
+
             let old_enabled = proxy.enabled;
             let old_proxy_type = proxy.proxy_type.clone();
             let old_local_ip = proxy.local_ip.clone();
@@ -619,9 +629,14 @@ pub async fn update_proxy(
 
 pub async fn delete_proxy(
     Path(id): Path<i64>,
-    Extension(_auth_user): Extension<Option<AuthUser>>,
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
     Extension(app_state): Extension<AppState>,
 ) -> impl IntoResponse {
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return (StatusCode::UNAUTHORIZED, ApiResponse::<&str>::error("Not authenticated".to_string())),
+    };
+
     let db = get_connection().await;
 
     // 先获取代理信息，用于停止监听器
@@ -640,6 +655,11 @@ pub async fn delete_proxy(
             )
         }
     };
+
+    // 校验归属权
+    if let Err((status, msg)) = super::verify_proxy_ownership(&auth_user, &proxy, db).await {
+        return (status, ApiResponse::<&str>::error(msg));
+    }
 
     let client_id = proxy.client_id.clone();
     let proxy_name = proxy.name.clone();
@@ -888,24 +908,21 @@ pub struct ToggleGroupRequest {
 
 pub async fn toggle_proxy_group(
     Path(group_id): Path<String>,
-    Extension(_auth_user): Extension<Option<AuthUser>>,
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
     Extension(app_state): Extension<AppState>,
     Json(req): Json<ToggleGroupRequest>,
 ) -> impl IntoResponse {
-    let db = get_connection().await;
-
-    let proxies = match Proxy::find()
-        .filter(crate::entity::proxy::Column::GroupId.eq(&group_id))
-        .all(db)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<&str>::error(format!("查询代理组失败: {}", e))),
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return (StatusCode::UNAUTHORIZED, ApiResponse::<&str>::error("Not authenticated".to_string())),
     };
 
-    if proxies.is_empty() {
-        return (StatusCode::NOT_FOUND, ApiResponse::<&str>::error("代理组不存在".to_string()));
-    }
+    let db = get_connection().await;
+
+    let proxies = match super::verify_proxy_group_ownership(&auth_user, &group_id, db).await {
+        Ok(p) => p,
+        Err((status, msg)) => return (status, ApiResponse::<&str>::error(msg)),
+    };
 
     let client_id = proxies[0].client_id.clone();
     let now = chrono::Utc::now().naive_utc();
@@ -948,23 +965,20 @@ pub async fn toggle_proxy_group(
 
 pub async fn delete_proxy_group(
     Path(group_id): Path<String>,
-    Extension(_auth_user): Extension<Option<AuthUser>>,
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
     Extension(app_state): Extension<AppState>,
 ) -> impl IntoResponse {
-    let db = get_connection().await;
-
-    let proxies = match Proxy::find()
-        .filter(crate::entity::proxy::Column::GroupId.eq(&group_id))
-        .all(db)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<&str>::error(format!("查询代理组失败: {}", e))),
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return (StatusCode::UNAUTHORIZED, ApiResponse::<&str>::error("Not authenticated".to_string())),
     };
 
-    if proxies.is_empty() {
-        return (StatusCode::NOT_FOUND, ApiResponse::<&str>::error("代理组不存在".to_string()));
-    }
+    let db = get_connection().await;
+
+    let proxies = match super::verify_proxy_group_ownership(&auth_user, &group_id, db).await {
+        Ok(p) => p,
+        Err((status, msg)) => return (status, ApiResponse::<&str>::error(msg)),
+    };
 
     let client_id = proxies[0].client_id.clone();
     let count = proxies.len();
@@ -1007,24 +1021,21 @@ pub struct UpdateGroupRequest {
 
 pub async fn update_proxy_group(
     Path(group_id): Path<String>,
-    Extension(_auth_user): Extension<Option<AuthUser>>,
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
     Extension(app_state): Extension<AppState>,
     Json(req): Json<UpdateGroupRequest>,
 ) -> impl IntoResponse {
-    let db = get_connection().await;
-
-    let proxies = match Proxy::find()
-        .filter(crate::entity::proxy::Column::GroupId.eq(&group_id))
-        .all(db)
-        .await
-    {
-        Ok(p) => p,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<&str>::error(format!("查询代理组失败: {}", e))),
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return (StatusCode::UNAUTHORIZED, ApiResponse::<&str>::error("Not authenticated".to_string())),
     };
 
-    if proxies.is_empty() {
-        return (StatusCode::NOT_FOUND, ApiResponse::<&str>::error("代理组不存在".to_string()));
-    }
+    let db = get_connection().await;
+
+    let proxies = match super::verify_proxy_group_ownership(&auth_user, &group_id, db).await {
+        Ok(p) => p,
+        Err((status, msg)) => return (status, ApiResponse::<&str>::error(msg)),
+    };
 
     let client_id = proxies[0].client_id.clone();
     let now = chrono::Utc::now().naive_utc();

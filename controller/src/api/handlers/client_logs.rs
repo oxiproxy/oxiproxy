@@ -13,9 +13,20 @@ use super::ApiResponse;
 /// GET /api/clients/{id}/logs - 获取客户端日志
 pub async fn get_client_logs(
     Path(client_id): Path<i64>,
-    Extension(_auth_user): Extension<Option<AuthUser>>,
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
     Extension(app_state): Extension<AppState>,
 ) -> impl IntoResponse {
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return (StatusCode::UNAUTHORIZED, ApiResponse::<Vec<LogEntry>>::error("Not authenticated".to_string())),
+    };
+
+    // 校验客户端归属权
+    let db = crate::migration::get_connection().await;
+    if let Err((status, msg)) = super::verify_client_ownership(&auth_user, client_id, db).await {
+        return (status, ApiResponse::<Vec<LogEntry>>::error(msg));
+    }
+
     info!("请求客户端 {} 的日志", client_id);
 
     // 直接通过 ClientStreamManager 向客户端请求日志

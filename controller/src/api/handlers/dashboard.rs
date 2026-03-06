@@ -1,5 +1,6 @@
 use sea_orm::{DatabaseConnection, DbErr, EntityTrait, ColumnTrait, QueryFilter};
 use crate::entity;
+use crate::middleware::AuthUser;
 use super::ApiResponse;
 use crate::migration::get_connection;
 
@@ -25,7 +26,18 @@ pub struct UserTrafficStats {
 /// 获取指定用户的仪表板统计数据
 pub async fn get_user_dashboard_stats(
     axum::extract::Path(user_id): axum::extract::Path<i64>,
+    axum::extract::Extension(auth_user_opt): axum::extract::Extension<Option<AuthUser>>,
 ) -> axum::response::Json<ApiResponse<DashboardStats>> {
+    let auth_user = match auth_user_opt {
+        Some(user) => user,
+        None => return ApiResponse::error("Not authenticated".to_string()),
+    };
+
+    // 非管理员只能查看自己的统计
+    if !auth_user.is_admin && auth_user.id != user_id {
+        return ApiResponse::error("无权访问此用户的统计数据".to_string());
+    }
+
     let db = get_connection().await;
 
     // 查询用户信息
