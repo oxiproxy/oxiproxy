@@ -23,7 +23,6 @@ export default function Users() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showBindModal, setShowBindModal] = useState(false);
   const [showQuotaModal, setShowQuotaModal] = useState(false);
-  const [showPortLimitModal, setShowPortLimitModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserWithNodeCount | null>(null);
   const [userNodes, setUserNodes] = useState<Node[]>([]);
   const [quotaSaving, setQuotaSaving] = useState(false);
@@ -224,6 +223,12 @@ export default function Users() {
   const handleManageQuota = (user: UserWithNodeCount) => {
     setSelectedUser(user);
     setQuotaChangeGb('');
+    setPortLimitData({
+      maxPortCount: user.maxPortCount?.toString() || '',
+      allowedPortRange: user.allowedPortRange || '',
+      maxNodeCount: user.maxNodeCount?.toString() || '',
+      maxClientCount: user.maxClientCount?.toString() || '',
+    });
     setShowQuotaModal(true);
   };
 
@@ -261,17 +266,6 @@ export default function Users() {
     }
   };
 
-  const handleManagePortLimit = (user: UserWithNodeCount) => {
-    setSelectedUser(user);
-    setPortLimitData({
-      maxPortCount: user.maxPortCount?.toString() || '',
-      allowedPortRange: user.allowedPortRange || '',
-      maxNodeCount: user.maxNodeCount?.toString() || '',
-      maxClientCount: user.maxClientCount?.toString() || '',
-    });
-    setShowPortLimitModal(true);
-  };
-
   const handleSavePortLimit = async () => {
     if (!selectedUser) return;
 
@@ -286,7 +280,7 @@ export default function Users() {
 
       if (response.success) {
         showToast('配额设置更新成功', 'success');
-        setShowPortLimitModal(false);
+        setShowQuotaModal(false);
         setSelectedUser(null);
         setPortLimitData({ maxPortCount: '', allowedPortRange: '', maxNodeCount: '', maxClientCount: '' });
         loadUsers();
@@ -462,16 +456,7 @@ export default function Users() {
                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
-                          配额管理
-                        </button>
-                        <button
-                          onClick={() => handleManagePortLimit(user)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary hover:bg-accent rounded-lg transition-colors"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
-                          </svg>
-                          端口/配额设置
+                          配额设置
                         </button>
                         <button
                           onClick={() => handleManageNodes(user)}
@@ -722,10 +707,10 @@ export default function Users() {
         </div>
       )}
 
-      {/* 配额管理模态框 */}
+      {/* 配额设置模态框（合并流量配额 + 端口/数量限制） */}
       {showQuotaModal && selectedUser && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm overflow-y-auto h-full w-full flex items-center justify-center z-50">
-          <div className="relative bg-card rounded-2xl shadow-2xl w-full max-w-md mx-4 transform transition-all">
+          <div className="relative bg-card rounded-2xl shadow-2xl w-full max-w-md mx-4 transform transition-all max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center">
@@ -734,208 +719,162 @@ export default function Users() {
                   </svg>
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-foreground">配额管理</h3>
-                  <p className="text-sm text-muted-foreground">{selectedUser.username}</p>
-                </div>
-              </div>
-
-              {/* 当前配额信息 */}
-              <div className="mb-6 p-4 bg-muted rounded-xl border border-border">
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground">当前配额</span>
-                    <span className="text-sm font-semibold text-foreground">
-                      {selectedUser.trafficQuotaGb ? `${selectedUser.trafficQuotaGb} GB` : '未设置'}
-                    </span>
-                  </div>
-                  {selectedUser.trafficQuotaGb && (
-                    <>
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-muted-foreground">剩余配额</span>
-                        <span className="text-sm font-semibold text-green-600">
-                          {selectedUser.remainingQuotaGb?.toFixed(2) || '0.00'} GB
-                        </span>
-                      </div>
-                      <div className="w-full bg-muted rounded-full h-2 mt-2">
-                        <div
-                          className={`h-2 rounded-full transition-all ${
-                            (selectedUser.remainingQuotaGb || 0) / selectedUser.trafficQuotaGb < 0.2
-                              ? 'bg-red-500'
-                              : (selectedUser.remainingQuotaGb || 0) / selectedUser.trafficQuotaGb < 0.5
-                              ? 'bg-yellow-500'
-                              : 'bg-green-500'
-                          }`}
-                          style={{
-                            width: `${Math.max(0, Math.min(100, ((selectedUser.remainingQuotaGb || 0) / selectedUser.trafficQuotaGb) * 100))}%`,
-                          }}
-                        ></div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* 配额调整输入 */}
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">调整配额 (GB)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    value={quotaChangeGb}
-                    onChange={(e) => setQuotaChangeGb(e.target.value)}
-                    placeholder="输入要增加或减少的配额"
-                    className="w-full px-4 py-3 border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all bg-muted/50 hover:bg-card"
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground">输入正数增加配额，负数减少配额</p>
-                </div>
-              </div>
-
-              {/* 操作按钮 */}
-              <div className="mt-6 flex gap-3">
-                <button
-                  onClick={() => {
-                    setShowQuotaModal(false);
-                    setSelectedUser(null);
-                    setQuotaChangeGb('');
-                  }}
-                  className="flex-1 px-4 py-2.5 bg-muted text-foreground font-medium rounded-xl hover:bg-accent transition-colors"
-                  disabled={quotaSaving}
-                >
-                  取消
-                </button>
-                <button
-                  onClick={() => handleAdjustQuota(false)}
-                  disabled={quotaSaving || !quotaChangeGb}
-                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-red-500 to-rose-600 text-primary-foreground font-medium rounded-xl hover:from-red-600 hover:to-rose-700 shadow-lg shadow-red-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {quotaSaving ? '处理中...' : '减少配额'}
-                </button>
-                <button
-                  onClick={() => handleAdjustQuota(true)}
-                  disabled={quotaSaving || !quotaChangeGb}
-                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-primary-foreground font-medium rounded-xl hover:from-emerald-600 hover:to-teal-700 shadow-lg shadow-emerald-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {quotaSaving ? '处理中...' : '增加配额'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 端口/配额设置管理模态框 */}
-      {showPortLimitModal && selectedUser && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm overflow-y-auto h-full w-full flex items-center justify-center z-50">
-          <div className="relative bg-card rounded-2xl shadow-2xl w-full max-w-md mx-4 transform transition-all">
-            <div className="p-6">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, hsl(263 70% 58%), hsl(239 84% 67%))' }}>
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-primary-foreground">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
-                  </svg>
-                </div>
-                <div>
                   <h3 className="text-lg font-bold text-foreground">配额设置</h3>
                   <p className="text-sm text-muted-foreground">{selectedUser.username}</p>
                 </div>
               </div>
 
-              {/* 当前使用情况 */}
-              <div className="mb-6 p-4 bg-muted rounded-xl border border-border">
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground">当前端口数量</span>
-                    <span className="text-sm font-semibold text-foreground">
-                      {selectedUser.currentPortCount || 0}{selectedUser.maxPortCount ? ` / ${selectedUser.maxPortCount}` : ''} 个
-                    </span>
+              {/* 流量配额区域 */}
+              <div className="mb-5">
+                <h4 className="text-sm font-semibold text-foreground mb-3">流量配额</h4>
+                <div className="p-4 bg-muted rounded-xl border border-border mb-3">
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">当前配额</span>
+                      <span className="text-sm font-semibold text-foreground">
+                        {selectedUser.trafficQuotaGb ? `${selectedUser.trafficQuotaGb} GB` : '未设置'}
+                      </span>
+                    </div>
+                    {selectedUser.trafficQuotaGb && (
+                      <>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-muted-foreground">剩余配额</span>
+                          <span className="text-sm font-semibold text-green-600">
+                            {selectedUser.remainingQuotaGb?.toFixed(2) || '0.00'} GB
+                          </span>
+                        </div>
+                        <div className="w-full bg-muted rounded-full h-2 mt-2">
+                          <div
+                            className={`h-2 rounded-full transition-all ${
+                              (selectedUser.remainingQuotaGb || 0) / selectedUser.trafficQuotaGb < 0.2
+                                ? 'bg-red-500'
+                                : (selectedUser.remainingQuotaGb || 0) / selectedUser.trafficQuotaGb < 0.5
+                                ? 'bg-yellow-500'
+                                : 'bg-green-500'
+                            }`}
+                            style={{
+                              width: `${Math.max(0, Math.min(100, ((selectedUser.remainingQuotaGb || 0) / selectedUser.trafficQuotaGb) * 100))}%`,
+                            }}
+                          ></div>
+                        </div>
+                      </>
+                    )}
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground">当前节点数量</span>
-                    <span className="text-sm font-semibold text-foreground">
-                      {selectedUser.node_count || 0}{selectedUser.maxNodeCount ? ` / ${selectedUser.maxNodeCount}` : ''} 个
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground">当前客户端数量</span>
-                    <span className="text-sm font-semibold text-foreground">
-                      {selectedUser.currentClientCount || 0}{selectedUser.maxClientCount ? ` / ${selectedUser.maxClientCount}` : ''} 个
-                    </span>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1.5">调整配额 (GB)</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={quotaChangeGb}
+                      onChange={(e) => setQuotaChangeGb(e.target.value)}
+                      placeholder="输入配额数量"
+                      className="flex-1 px-4 py-2.5 border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all bg-muted/50 hover:bg-card"
+                    />
+                    <button
+                      onClick={() => handleAdjustQuota(false)}
+                      disabled={quotaSaving || !quotaChangeGb}
+                      className="px-3 py-2.5 bg-gradient-to-r from-red-500 to-rose-600 text-primary-foreground text-xs font-medium rounded-xl hover:from-red-600 hover:to-rose-700 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {quotaSaving ? '...' : '减少'}
+                    </button>
+                    <button
+                      onClick={() => handleAdjustQuota(true)}
+                      disabled={quotaSaving || !quotaChangeGb}
+                      className="px-3 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 text-primary-foreground text-xs font-medium rounded-xl hover:from-emerald-600 hover:to-teal-700 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {quotaSaving ? '...' : '增加'}
+                    </button>
                   </div>
                 </div>
               </div>
 
-              {/* 配额配置 */}
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">
-                    最大端口数量
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={portLimitData.maxPortCount}
-                    onChange={(e) => setPortLimitData({ ...portLimitData, maxPortCount: e.target.value })}
-                    placeholder="留空表示无限制"
-                    className="w-full px-4 py-3 border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-muted/50 hover:bg-card"
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground">限制用户可以创建的代理（端口）数量</p>
-                </div>
+              <hr className="border-border mb-5" />
 
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">
-                    最大节点数量
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={portLimitData.maxNodeCount}
-                    onChange={(e) => setPortLimitData({ ...portLimitData, maxNodeCount: e.target.value })}
-                    placeholder="留空表示无限制"
-                    className="w-full px-4 py-3 border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-muted/50 hover:bg-card"
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground">限制用户可以绑定的节点数量</p>
+              {/* 数量限制区域 */}
+              <div className="mb-5">
+                <h4 className="text-sm font-semibold text-foreground mb-3">数量限制</h4>
+                <div className="p-4 bg-muted rounded-xl border border-border mb-3">
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">端口数量</span>
+                      <span className="text-sm font-semibold text-foreground">
+                        {selectedUser.currentPortCount || 0}{selectedUser.maxPortCount ? ` / ${selectedUser.maxPortCount}` : ''} 个
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">节点数量</span>
+                      <span className="text-sm font-semibold text-foreground">
+                        {selectedUser.node_count || 0}{selectedUser.maxNodeCount ? ` / ${selectedUser.maxNodeCount}` : ''} 个
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">客户端数量</span>
+                      <span className="text-sm font-semibold text-foreground">
+                        {selectedUser.currentClientCount || 0}{selectedUser.maxClientCount ? ` / ${selectedUser.maxClientCount}` : ''} 个
+                      </span>
+                    </div>
+                  </div>
                 </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">
-                    最大客户端数量
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={portLimitData.maxClientCount}
-                    onChange={(e) => setPortLimitData({ ...portLimitData, maxClientCount: e.target.value })}
-                    placeholder="留空表示无限制"
-                    className="w-full px-4 py-3 border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-muted/50 hover:bg-card"
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground">限制用户可以创建的客户端数量</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">
-                    允许的端口范围
-                  </label>
-                  <input
-                    type="text"
-                    value={portLimitData.allowedPortRange}
-                    onChange={(e) => setPortLimitData({ ...portLimitData, allowedPortRange: e.target.value })}
-                    placeholder="例如: 1000-9999,20000-30000"
-                    className="w-full px-4 py-3 border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-muted/50 hover:bg-card font-mono text-sm"
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    格式: 单个端口 (8080) 或范围 (1000-9999)，多个用逗号分隔
-                  </p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1.5">最大端口数量</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={portLimitData.maxPortCount}
+                      onChange={(e) => setPortLimitData({ ...portLimitData, maxPortCount: e.target.value })}
+                      placeholder="留空表示无限制"
+                      className="w-full px-4 py-2.5 border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-muted/50 hover:bg-card"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1.5">最大节点数量</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={portLimitData.maxNodeCount}
+                      onChange={(e) => setPortLimitData({ ...portLimitData, maxNodeCount: e.target.value })}
+                      placeholder="留空表示无限制"
+                      className="w-full px-4 py-2.5 border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-muted/50 hover:bg-card"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1.5">最大客户端数量</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={portLimitData.maxClientCount}
+                      onChange={(e) => setPortLimitData({ ...portLimitData, maxClientCount: e.target.value })}
+                      placeholder="留空表示无限制"
+                      className="w-full px-4 py-2.5 border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-muted/50 hover:bg-card"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1.5">允许的端口范围</label>
+                    <input
+                      type="text"
+                      value={portLimitData.allowedPortRange}
+                      onChange={(e) => setPortLimitData({ ...portLimitData, allowedPortRange: e.target.value })}
+                      placeholder="例如: 1000-9999,20000-30000"
+                      className="w-full px-4 py-2.5 border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-muted/50 hover:bg-card font-mono text-sm"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      格式: 单个端口 (8080) 或范围 (1000-9999)，多个用逗号分隔
+                    </p>
+                  </div>
                 </div>
               </div>
 
               {/* 操作按钮 */}
-              <div className="mt-6 flex gap-3">
+              <div className="flex gap-3">
                 <button
                   onClick={() => {
-                    setShowPortLimitModal(false);
+                    setShowQuotaModal(false);
                     setSelectedUser(null);
+                    setQuotaChangeGb('');
                     setPortLimitData({ maxPortCount: '', allowedPortRange: '', maxNodeCount: '', maxClientCount: '' });
                   }}
                   className="flex-1 px-4 py-2.5 bg-muted text-foreground font-medium rounded-xl hover:bg-accent transition-colors"
@@ -948,7 +887,7 @@ export default function Users() {
                   disabled={portLimitSaving}
                   className="flex-1 px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:bg-primary/90 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {portLimitSaving ? '保存中...' : '保存'}
+                  {portLimitSaving ? '保存中...' : '保存数量限制'}
                 </button>
               </div>
             </div>

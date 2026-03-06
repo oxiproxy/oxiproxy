@@ -282,7 +282,7 @@ export default function Clients() {
     if (platform === 'windows') {
       return `client.exe install-service --controller-url ${protocol}://${url} --token ${token}`;
     } else {
-      return `./client daemon --controller-url ${protocol}://${url} --token ${token} --pid-file /var/run/oxiproxy-client.pid --log-dir ./logs`;
+      return `./client daemon --controller-url ${protocol}://${url} --token ${token}`;
     }
   };
 
