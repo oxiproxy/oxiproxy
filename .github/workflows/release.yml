@@ -53,6 +53,15 @@ jobs:
           version: '25.x'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build Dashboard
+        run: |
+          cd dashboard
+          bun install
+          bun run build
+
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
