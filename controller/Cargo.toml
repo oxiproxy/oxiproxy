@@ -17,7 +17,9 @@ async-trait = "0.1"
 axum = "0.8"
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 axum-server-dual-protocol = { version = "0.7", default-features = false }
-tower-http = { version = "0.6", features = ["fs", "cors"] }
+tower-http = { version = "0.6", features = ["cors"] }
+rust-embed = { version = "8", features = ["axum"] }
+mime_guess = "2"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = "0.4"
 tracing = "0.1.43"

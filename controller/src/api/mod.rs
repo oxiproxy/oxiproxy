@@ -1,8 +1,9 @@
 use axum::middleware::from_fn;
 use axum::{Extension, Router};
 use axum::routing::{get, post, put, delete};
+use axum::response::IntoResponse;
+use axum::http::{header, StatusCode};
 use tower_http::cors::CorsLayer;
-use tower_http::services::{ServeDir, ServeFile};
 use tracing::{info, error, warn};
 use crate::AppState;
 use crate::middleware::auth_middleware;
@@ -10,8 +11,44 @@ use std::sync::Arc;
 use axum_server::tls_rustls::RustlsConfig;
 use axum_server_dual_protocol::ServerExt;
 use base64::Engine;
+use rust_embed::Embed;
+
+#[derive(Embed)]
+#[folder = "../dist"]
+struct Assets;
 
 pub mod handlers;
+
+/// 嵌入式静态文件服务 handler（SPA fallback）
+async fn static_handler(uri: axum::http::Uri) -> impl IntoResponse {
+    let path = uri.path().trim_start_matches('/');
+
+    // 尝试匹配请求路径的文件
+    if !path.is_empty() {
+        if let Some(file) = Assets::get(path) {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            return (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, mime.as_ref().to_string())],
+                file.data.to_vec(),
+            ).into_response();
+        }
+    }
+
+    // SPA fallback: 返回 index.html
+    match Assets::get("index.html") {
+        Some(file) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/html".to_string())],
+            file.data.to_vec(),
+        ).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain".to_string())],
+            "Dashboard not found. Build the frontend first: cd dashboard && bun run build".as_bytes().to_vec(),
+        ).into_response(),
+    }
+}
 
 /// 从 ConfigManager 加载 Web TLS 证书和私钥
 async fn load_web_tls_config(config_manager: &crate::config_manager::ConfigManager) -> Option<RustlsConfig> {
@@ -137,11 +174,8 @@ pub fn start_web_server(app_state: AppState) -> tokio::task::JoinHandle<()> {
         let app = Router::new()
             // API 路由
             .nest("/api", api_routes)
-            // 静态文件服务，带 SPA fallback
-            .fallback_service(
-                ServeDir::new("dist")
-                    .fallback(ServeFile::new("dist/index.html"))
-            )
+            // 嵌入式静态文件服务，带 SPA fallback
+            .fallback(static_handler)
             .layer(CorsLayer::permissive());
 
         let web_addr = format!("0.0.0.0:{}", web_port);
