@@ -228,7 +228,7 @@ jobs:
             1. 解压下载的文件（会得到 `oxiproxy` 文件夹）
             2. 进入目录：`cd oxiproxy`
             3. 运行 controller：`./controller start`
-            4. 运行 node：`./node start --controller-url http://localhost:3100 --token <token> --bind-port 7000`
+            4. 运行 node：`./node start --controller-url http://localhost:3100 --token <token>`
             5. 运行 client：`./client start --controller-url http://localhost:3100 --token <token>`
 
             详细文档请参考 [README.md](https://github.com/${{ github.repository }})

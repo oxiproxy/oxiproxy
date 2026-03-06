@@ -86,7 +86,7 @@ cargo build --release
 cargo run --release -p controller
 
 # 运行 Node（节点服务器）
-cargo run --release -p node -- --controller-url http://localhost:3100 --token <token> --bind-port 7000
+cargo run --release -p node -- --controller-url http://localhost:3100 --token <token>
 
 # 运行 Client（客户端）
 cargo run --release -p client -- --controller-url http://localhost:3100 --token <token>

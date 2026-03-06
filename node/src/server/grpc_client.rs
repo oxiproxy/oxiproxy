@@ -101,14 +101,13 @@ pub enum ControllerResponse {
 impl AgentGrpcClient {
     /// 连接 Controller 并认证节点
     ///
-    /// 返回 (gRPC 客户端, 命令接收器, Controller 下发的权威隧道协议)
+    /// 返回 (gRPC 客户端, 命令接收器, Controller 下发的权威隧道协议, 速度限制, 隧道端口)
     pub async fn connect_and_authenticate(
         controller_url: &str,
         token: &str,
-        tunnel_port: u16,
         tunnel_protocol: &str,
         tls_ca_cert: Option<&[u8]>,
-    ) -> Result<(Arc<Self>, mpsc::Receiver<ControllerCommand>, String, Option<i64>)> {
+    ) -> Result<(Arc<Self>, mpsc::Receiver<ControllerCommand>, String, Option<i64>, u16)> {
         let mut endpoint = Channel::from_shared(controller_url.to_string())?
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(10))
@@ -155,7 +154,6 @@ impl AgentGrpcClient {
         let register_msg = oxiproxy::AgentServerMessage {
             payload: Some(AgentPayload::Register(oxiproxy::NodeRegisterRequest {
                 token: token.to_string(),
-                tunnel_port: tunnel_port as u32,
                 tunnel_protocol: tunnel_protocol.to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             })),
@@ -181,12 +179,13 @@ impl AgentGrpcClient {
         };
 
         let node_id = register_resp.node_id;
+        let tunnel_port = register_resp.tunnel_port as u16;
         let authoritative_protocol = if register_resp.tunnel_protocol.is_empty() {
             tunnel_protocol.to_string()
         } else {
             register_resp.tunnel_protocol.clone()
         };
-        info!("gRPC 连接认证成功: 节点 #{} ({}), 隧道协议: {}", node_id, register_resp.node_name, authoritative_protocol);
+        info!("gRPC 连接认证成功: 节点 #{} ({}), 隧道协议: {}, 隧道端口: {}", node_id, register_resp.node_name, authoritative_protocol, tunnel_port);
         let speed_limit = register_resp.speed_limit;
 
         let shared_sender = SharedGrpcSender::new(tx.clone());
@@ -212,20 +211,19 @@ impl AgentGrpcClient {
             Self::shared_heartbeat_loop(heartbeat_sender).await;
         });
 
-        Ok((grpc_client, cmd_rx, authoritative_protocol, speed_limit))
+        Ok((grpc_client, cmd_rx, authoritative_protocol, speed_limit, tunnel_port))
     }
 
     /// 重连 Controller（复用已有的 SharedGrpcSender 和 SharedPendingRequests）
     ///
-    /// 返回 (命令接收器, Controller 下发的权威隧道协议)
+    /// 返回 (命令接收器, Controller 下发的权威隧道协议, 速度限制, 隧道端口)
     pub async fn reconnect(
         self: &Arc<Self>,
         controller_url: &str,
         token: &str,
-        tunnel_port: u16,
         tunnel_protocol: &str,
         tls_ca_cert: Option<&[u8]>,
-    ) -> Result<(mpsc::Receiver<ControllerCommand>, String, Option<i64>)> {
+    ) -> Result<(mpsc::Receiver<ControllerCommand>, String, Option<i64>, u16)> {
         let mut endpoint = Channel::from_shared(controller_url.to_string())?;
 
         if controller_url.starts_with("https://") {
@@ -266,7 +264,6 @@ impl AgentGrpcClient {
         let register_msg = oxiproxy::AgentServerMessage {
             payload: Some(AgentPayload::Register(oxiproxy::NodeRegisterRequest {
                 token: token.to_string(),
-                tunnel_port: tunnel_port as u32,
                 tunnel_protocol: tunnel_protocol.to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             })),
@@ -292,12 +289,13 @@ impl AgentGrpcClient {
         };
 
         let node_id = register_resp.node_id;
+        let tunnel_port = register_resp.tunnel_port as u16;
         let authoritative_protocol = if register_resp.tunnel_protocol.is_empty() {
             tunnel_protocol.to_string()
         } else {
             register_resp.tunnel_protocol.clone()
         };
-        info!("gRPC 重连认证成功: 节点 #{} ({}), 隧道协议: {}", node_id, register_resp.node_name, authoritative_protocol);
+        info!("gRPC 重连认证成功: 节点 #{} ({}), 隧道协议: {}, 隧道端口: {}", node_id, register_resp.node_name, authoritative_protocol, tunnel_port);
         let speed_limit = register_resp.speed_limit;
 
         // 热替换 sender 和 pending
@@ -319,7 +317,7 @@ impl AgentGrpcClient {
             Self::shared_heartbeat_loop(heartbeat_sender).await;
         });
 
-        Ok((cmd_rx, authoritative_protocol, speed_limit))
+        Ok((cmd_rx, authoritative_protocol, speed_limit, tunnel_port))
     }
 
     /// 消息接收循环

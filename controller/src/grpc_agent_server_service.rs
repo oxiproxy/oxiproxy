@@ -92,6 +92,7 @@ impl AgentServerService for AgentServerServiceImpl {
             let node_name = node_model.name.clone();
             let authoritative_protocol = node_model.tunnel_protocol.clone();
             let node_speed_limit = node_model.speed_limit;
+            let node_tunnel_port = node_model.tunnel_port;
             let current_tunnel_addr = node_model.tunnel_addr.clone();
 
             // 查询地理位置信息
@@ -101,9 +102,8 @@ impl AgentServerService for AgentServerServiceImpl {
                 None
             };
 
-            // 更新节点信息（不覆盖 tunnel_protocol，Controller DB 为权威来源）
+            // 更新节点信息（tunnel_port 和 tunnel_protocol 均以 Controller DB 为权威来源）
             let mut active: crate::entity::node::ActiveModel = node_model.into();
-            active.tunnel_port = Set(register_req.tunnel_port as i32);
             active.is_online = Set(true);
             active.updated_at = Set(Utc::now().naive_utc());
             active.version = Set(if register_req.version.is_empty() { None } else { Some(register_req.version.clone()) });
@@ -129,13 +129,14 @@ impl AgentServerService for AgentServerServiceImpl {
 
             info!("节点 #{} ({}) 已通过 gRPC 连接认证", node_id, node_name);
 
-            // 发送认证响应（包含权威隧道协议）
+            // 发送认证响应（包含权威隧道协议和隧道端口）
             let register_resp = oxiproxy::ControllerToAgentMessage {
                 payload: Some(ControllerPayload::RegisterResponse(oxiproxy::NodeRegisterResponse {
                     node_id,
                     node_name: node_name.clone(),
                     tunnel_protocol: authoritative_protocol,
                     speed_limit: node_speed_limit,
+                    tunnel_port: node_tunnel_port as u32,
                 })),
             };
             if tx.send(Ok(register_resp)).await.is_err() {

@@ -109,7 +109,7 @@ message AgentClientResponse {
 
 message NodeRegisterRequest {
   string token = 1;
-  uint32 tunnel_port = 2;
+  reserved 2;  // 原 tunnel_port，已移至 NodeRegisterResponse 由 Controller 下发
   string tunnel_protocol = 3;
   string version = 4;  // 节点软件版本
 }
@@ -119,6 +119,7 @@ message NodeRegisterResponse {
   string node_name = 2;
   string tunnel_protocol = 3;  // Controller 下发的权威隧道协议
   optional int64 speed_limit = 4;  // 速度限制(字节/秒)，0或不设=不限
+  uint32 tunnel_port = 5;  // Controller 下发的隧道监听端口
 }
 
 // ===== 认证 =====

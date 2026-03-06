@@ -27,10 +27,6 @@ enum Command {
         #[arg(long)]
         token: String,
 
-        /// 隧道监听端口（默认 7000）
-        #[arg(long, default_value = "7000")]
-        bind_port: u16,
-
         /// 隧道协议：quic 或 kcp（默认 quic）
         #[arg(long, default_value = "quic")]
         protocol: String,
@@ -66,10 +62,6 @@ enum Command {
         /// 节点密钥
         #[arg(long)]
         token: String,
-
-        /// 隧道监听端口（默认 7000）
-        #[arg(long, default_value = "7000")]
-        bind_port: u16,
 
         /// 隧道协议：quic 或 kcp（默认 quic）
         #[arg(long, default_value = "quic")]
@@ -116,8 +108,8 @@ fn load_tls_ca_cert(path: &Option<String>) -> anyhow::Result<Option<Vec<u8>>> {
     }
 }
 
-async fn run_node(controller_url: String, token: String, bind_port: u16, protocol: String, tls_ca_cert: Option<Vec<u8>>, log_dir: Option<String>) -> anyhow::Result<()> {
-    server::run_server_controller_mode(controller_url, token, bind_port, protocol, tls_ca_cert, log_dir).await
+async fn run_node(controller_url: String, token: String, protocol: String, tls_ca_cert: Option<Vec<u8>>, log_dir: Option<String>) -> anyhow::Result<()> {
+    server::run_server_controller_mode(controller_url, token, protocol, tls_ca_cert, log_dir).await
 }
 
 // ─── Unix 入口 ───────────────────────────────────────────
@@ -136,7 +128,6 @@ fn main() -> anyhow::Result<()> {
         Command::Start {
             controller_url,
             token,
-            bind_port,
             protocol,
             tls_ca_cert,
             log_dir,
@@ -146,7 +137,7 @@ fn main() -> anyhow::Result<()> {
                 fs::create_dir_all(dir).expect("无法创建日志目录");
             }
             let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(run_node(controller_url, token, bind_port, protocol, ca_cert, log_dir))?;
+            runtime.block_on(run_node(controller_url, token, protocol, ca_cert, log_dir))?;
         }
 
         Command::Stop { pid_file } => {
@@ -156,7 +147,6 @@ fn main() -> anyhow::Result<()> {
         Command::Daemon {
             controller_url,
             token,
-            bind_port,
             protocol,
             tls_ca_cert,
             pid_file,
@@ -191,7 +181,7 @@ fn main() -> anyhow::Result<()> {
             // fork 完成后再创建 tokio runtime，确保 epoll fd 和线程池状态正确
             let ca_cert = load_tls_ca_cert(&tls_ca_cert)?;
             let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(run_node(controller_url, token, bind_port, protocol, ca_cert, Some(log_dir)))?;
+            runtime.block_on(run_node(controller_url, token, protocol, ca_cert, Some(log_dir)))?;
         }
 
         Command::Update => {
@@ -241,7 +231,6 @@ fn main() -> anyhow::Result<()> {
         Command::Start {
             controller_url,
             token,
-            bind_port,
             protocol,
             tls_ca_cert,
             log_dir,
@@ -251,7 +240,7 @@ fn main() -> anyhow::Result<()> {
                 fs::create_dir_all(dir).expect("无法创建日志目录");
             }
             let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(async { run_node(controller_url, token, bind_port, protocol, ca_cert, log_dir).await })
+            runtime.block_on(async { run_node(controller_url, token, protocol, ca_cert, log_dir).await })
         }
 
         Command::Stop { pid_file } => stop_daemon_windows(&pid_file),
@@ -259,7 +248,6 @@ fn main() -> anyhow::Result<()> {
         Command::Daemon {
             controller_url,
             token,
-            bind_port,
             protocol,
             tls_ca_cert,
             pid_file,
@@ -267,7 +255,6 @@ fn main() -> anyhow::Result<()> {
         } => start_daemon_windows(
             &controller_url,
             &token,
-            bind_port,
             &protocol,
             &tls_ca_cert,
             &pid_file,
@@ -282,7 +269,6 @@ fn main() -> anyhow::Result<()> {
 fn start_daemon_windows(
     controller_url: &str,
     token: &str,
-    bind_port: u16,
     protocol: &str,
     tls_ca_cert: &Option<String>,
     pid_file: &str,
@@ -309,8 +295,6 @@ fn start_daemon_windows(
         controller_url.to_string(),
         "--token".to_string(),
         token.to_string(),
-        "--bind-port".to_string(),
-        bind_port.to_string(),
         "--protocol".to_string(),
         protocol.to_string(),
         "--log-dir".to_string(),

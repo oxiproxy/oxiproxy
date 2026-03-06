@@ -27,8 +27,6 @@ services:
       - ${CONTROLLER_URL}
       - --token
       - ${NODE_TOKEN}
-      - --bind-port
-      - ${BIND_PORT:-7000}
 
     # 健康检查（可选）
     # healthcheck:

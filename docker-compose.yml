@@ -90,8 +90,6 @@ services:
       - http://controller:3100
       - --token
       - ${NODE_TOKEN:-your-node-token-here}
-      - --bind-port
-      - "7000"
 
     # 依赖关系
     depends_on:

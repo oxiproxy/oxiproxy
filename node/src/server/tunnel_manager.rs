@@ -14,7 +14,7 @@ use common::KcpConfig;
 
 pub struct TunnelManager {
     proxy_server: Arc<ProxyServer>,
-    bind_port: u16,
+    bind_port: RwLock<u16>,
     current_protocol: RwLock<String>,
     cancel_token: RwLock<Option<CancellationToken>>,
     listener_handle: RwLock<Option<JoinHandle<()>>>,
@@ -24,7 +24,7 @@ impl TunnelManager {
     pub fn new(proxy_server: Arc<ProxyServer>, bind_port: u16) -> Self {
         Self {
             proxy_server,
-            bind_port,
+            bind_port: RwLock::new(bind_port),
             current_protocol: RwLock::new(String::new()),
             cancel_token: RwLock::new(None),
             listener_handle: RwLock::new(None),
@@ -35,7 +35,7 @@ impl TunnelManager {
     pub async fn start(&self, protocol: &str, kcp_config: Option<KcpConfig>) -> anyhow::Result<()> {
         self.stop().await;
 
-        let bind_addr = format!("0.0.0.0:{}", self.bind_port);
+        let bind_addr = format!("0.0.0.0:{}", *self.bind_port.read().await);
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
         let proxy_server = self.proxy_server.clone();
@@ -89,6 +89,17 @@ impl TunnelManager {
                 Err(_) => {
                     warn!("隧道监听器停止超时，强制终止");
                 }
+            }
+        }
+    }
+
+    /// 更新隧道端口（下次 start/switch_protocol 时生效）
+    pub fn update_port(&self, new_port: u16) {
+        // 使用 try_write 避免异步，端口更新总是在 switch_protocol 之前调用
+        if let Ok(mut port) = self.bind_port.try_write() {
+            if *port != new_port {
+                info!("隧道端口变更: {} -> {}", *port, new_port);
+                *port = new_port;
             }
         }
     }

@@ -23,7 +23,6 @@ use common::protocol::auth::ClientAuthProvider;
 pub async fn run_server_controller_mode(
     controller_url: String,
     token: String,
-    bind_port: u16,
     protocol: String,
     tls_ca_cert: Option<Vec<u8>>,
     log_dir: Option<String>,
@@ -54,20 +53,18 @@ pub async fn run_server_controller_mode(
 
     info!("Agent Server 启动 (Controller gRPC 模式)");
     info!("Controller: {}", controller_url);
-    info!("隧道端口: {}", bind_port);
     info!("隧道协议: {}", protocol);
 
     // 首次连接 Controller 并认证（protocol 作为回退值，最终以 Controller 返回为准）
-    let (grpc_client, cmd_rx, authoritative_protocol, initial_speed_limit) = grpc_client::AgentGrpcClient::connect_and_authenticate(
+    let (grpc_client, cmd_rx, authoritative_protocol, initial_speed_limit, bind_port) = grpc_client::AgentGrpcClient::connect_and_authenticate(
         &controller_url,
         &token,
-        bind_port,
         &protocol,
         tls_ca_cert.as_deref(),
     ).await?;
 
     let node_id = grpc_client.node_id().await;
-    info!("连接认证成功: 节点 #{}, Controller 协议: {}", node_id, authoritative_protocol);
+    info!("连接认证成功: 节点 #{}, Controller 协议: {}, 隧道端口: {}", node_id, authoritative_protocol, bind_port);
 
     // 创建速度限制器（0 表示不限速）
     let speed_limiter = speed_limiter::SpeedLimiter::new(initial_speed_limit.unwrap_or(0) as u64);
@@ -156,11 +153,10 @@ pub async fn run_server_controller_mode(
                     match grpc_client_reconnect.reconnect(
                         &controller_url_clone,
                         &token_clone,
-                        bind_port,
                         &protocol_clone,
                         tls_ca_cert_clone.as_deref(),
                     ).await {
-                        Ok((new_cmd_rx, new_protocol, new_speed_limit)) => {
+                        Ok((new_cmd_rx, new_protocol, new_speed_limit, new_tunnel_port)) => {
                             info!("gRPC 重连成功");
 
                             // 更新速度限制
@@ -168,8 +164,9 @@ pub async fn run_server_controller_mode(
                                 speed_limiter_reconnect.update_rate(limit as u64);
                             }
 
-                            // 如果协议变更，切换隧道协议
+                            // 如果协议或端口变更，重启隧道
                             if !new_protocol.is_empty() {
+                                tunnel_manager_reconnect.update_port(new_tunnel_port);
                                 if let Err(e) = tunnel_manager_reconnect.switch_protocol(&new_protocol).await {
                                     error!("重连后切换协议失败: {}", e);
                                 }
