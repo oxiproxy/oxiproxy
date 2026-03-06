@@ -349,8 +349,8 @@ pub async fn update_user(
     }
 
     // Update traffic limits if provided
-    if req.traffic_quota_gb.is_some() || req.traffic_quota_gb.is_none() {
-        user.traffic_quota_gb = Set(req.traffic_quota_gb);
+    if let Some(quota) = req.traffic_quota_gb {
+        user.traffic_quota_gb = Set(Some(quota));
     }
     if let Some(cycle) = req.traffic_reset_cycle {
         user.traffic_reset_cycle = Set(cycle);

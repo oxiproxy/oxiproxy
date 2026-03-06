@@ -221,8 +221,8 @@ pub async fn update_client(
     if let Some(region) = req.region {
         client_active.region = Set(Some(region));
     }
-    if req.traffic_quota_gb.is_some() || req.traffic_quota_gb.is_none() {
-        client_active.traffic_quota_gb = Set(req.traffic_quota_gb);
+    if let Some(quota) = req.traffic_quota_gb {
+        client_active.traffic_quota_gb = Set(Some(quota));
     }
     if let Some(cycle) = req.traffic_reset_cycle {
         client_active.traffic_reset_cycle = Set(cycle);
