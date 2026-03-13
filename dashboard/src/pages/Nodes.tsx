@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { nodeService, systemService } from '../lib/services';
-import type { Node } from '../lib/types';
+import type { Node, User } from '../lib/types';
 import { formatDate } from '../lib/utils';
 import { useToast } from '../contexts/ToastContext';
+import { getStoredJson } from '../lib/api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { TableSkeleton } from '../components/Skeleton';
 import {
@@ -57,7 +58,7 @@ export default function Nodes() {
 
   useEffect(() => {
     // 获取当前用户信息
-    const authUser = JSON.parse(localStorage.getItem('user') || '{}');
+    const authUser = getStoredJson<Partial<User>>('user', {});
     setIsAdmin(authUser.is_admin || false);
     loadNodes();
 
@@ -418,9 +419,9 @@ export default function Nodes() {
     const token = node.secret;
 
     if (platform === 'windows') {
-      return `node.exe start --controller-url ${protocol}://${url} --token ${token} --bind-port 7000`;
+      return `node.exe start --controller-url ${protocol}://${url} --token ${token}`;
     } else {
-      return `./node start --controller-url ${protocol}://${url} --token ${token} --bind-port 7000`;
+      return `./node start --controller-url ${protocol}://${url} --token ${token}`;
     }
   };
 
@@ -431,9 +432,9 @@ export default function Nodes() {
     const token = node.secret;
 
     if (platform === 'windows') {
-      return `node.exe daemon --controller-url ${protocol}://${url} --token ${token} --bind-port 7000`;
+      return `node.exe daemon --controller-url ${protocol}://${url} --token ${token}`;
     } else {
-      return `./node daemon --controller-url ${protocol}://${url} --token ${token} --bind-port 7000`;
+      return `./node daemon --controller-url ${protocol}://${url} --token ${token}`;
     }
   };
 

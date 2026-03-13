@@ -7,7 +7,7 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         let configs = vec![
-            ("default_traffic_quota_gb", "0", "默认用户流量配额(GB)", "number"),
+            ("default_traffic_quota_gb", "0", "默认用户流量配额(GB)", "float"),
             ("default_max_port_count", "0", "默认用户最大端口数", "number"),
             ("default_max_node_count", "0", "默认用户最大节点数", "number"),
             ("default_max_client_count", "0", "默认用户最大客户端数", "number"),

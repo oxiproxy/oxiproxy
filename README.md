@@ -263,7 +263,7 @@ sudo usermod -aG docker $USER && newgrp docker
 mkdir -p /opt/oxiproxy && cd /opt/oxiproxy
 
 # 下载配置文件
-curl -O https://raw.githubusercontent.com/oxiproxy/oxiproxy/master/docker-compose.yml
+curl -O https://raw.githubusercontent.com/oxiproxy/oxiproxy/master/docker/docker-compose.yml
 
 # 启动服务
 mkdir -p data && docker compose up -d

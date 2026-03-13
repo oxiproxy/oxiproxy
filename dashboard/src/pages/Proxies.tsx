@@ -1,8 +1,9 @@
 import { useEffect, useState, Fragment } from 'react';
 import { proxyService, clientService, nodeService, userService } from '../lib/services';
-import type { Proxy, Client, Node, ProxyGroup, ProxyDisplayRow } from '../lib/types';
+import type { Proxy, Client, Node, ProxyGroup, ProxyDisplayRow, User } from '../lib/types';
 import { formatBytes } from '../lib/utils';
 import { useToast } from '../contexts/ToastContext';
+import { getStoredJson } from '../lib/api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { TableSkeleton } from '../components/Skeleton';
 import {
@@ -81,7 +82,7 @@ export default function Proxies() {
         setNodes(nodesRes.data);
 
         // 获取当前用户信息
-        const authUser = JSON.parse(localStorage.getItem('user') || '{}');
+        const authUser = getStoredJson<Partial<User>>('user', {});
 
         if (authUser.is_admin) {
           // 管理员可以看到所有节点
@@ -170,7 +171,7 @@ export default function Proxies() {
     }
 
     // 验证端口配额（仅对非管理员）
-    const authUser = JSON.parse(localStorage.getItem('user') || '{}');
+    const authUser = getStoredJson<Partial<User>>('user', {});
     if (!authUser.is_admin && userPortInfo) {
       if (userPortInfo.maxPortCount !== null) {
         const availableCount = userPortInfo.maxPortCount - userPortInfo.currentPortCount;
@@ -376,7 +377,7 @@ export default function Proxies() {
   // 获取用户端口配额信息
   const loadUserPortInfo = async () => {
     try {
-      const authUser = JSON.parse(localStorage.getItem('user') || '{}');
+      const authUser = getStoredJson<Partial<User>>('user', {});
       if (authUser.is_admin) {
         // 管理员没有端口限制
         setUserPortInfo(null);

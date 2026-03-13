@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { User } from '../lib/types';
+import { getStoredJson } from '../lib/api';
 
 interface AuthContextType {
   user: User | null;
@@ -37,7 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (response.ok) {
             // Token有效，恢复登录状态
             setToken(storedToken);
-            setUser(JSON.parse(storedUser));
+            setUser(getStoredJson<User | null>('user', null));
           } else {
             // Token无效，清除存储
             console.warn('Token已过期或无效，需要重新登录');
@@ -48,7 +49,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.error('验证token失败:', error);
           // 网络错误时仍然使用本地token（离线场景）
           setToken(storedToken);
-          setUser(JSON.parse(storedUser));
+          const parsedUser = getStoredJson<User | null>('user', null);
+          if (parsedUser) {
+            setUser(parsedUser);
+          } else {
+            // localStorage 中的 user 数据损坏，清除并要求重新登录
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+          }
         }
       }
       setIsLoading(false);

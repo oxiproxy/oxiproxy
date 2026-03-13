@@ -4,14 +4,22 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, oneshot};
 use uuid::Uuid;
 
 /// 管理双向流上的待处理请求
 pub struct PendingRequests<T: Send + 'static> {
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<T>>>>,
+    pending: Arc<Mutex<HashMap<String, PendingEntry<T>>>>,
 }
+
+struct PendingEntry<T> {
+    sender: oneshot::Sender<T>,
+    created_at: Instant,
+}
+
+/// 过期请求的默认超时时间
+const STALE_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 impl<T: Send + 'static> PendingRequests<T> {
     pub fn new() -> Self {
@@ -24,15 +32,24 @@ impl<T: Send + 'static> PendingRequests<T> {
     pub async fn register(&self) -> (String, oneshot::Receiver<T>) {
         let request_id = Uuid::new_v4().to_string();
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(request_id.clone(), tx);
+        let mut pending = self.pending.lock().await;
+
+        // 顺便清理过期请求，防止内存泄漏
+        let now = Instant::now();
+        pending.retain(|_, entry| now.duration_since(entry.created_at) < STALE_REQUEST_TIMEOUT);
+
+        pending.insert(request_id.clone(), PendingEntry {
+            sender: tx,
+            created_at: now,
+        });
         (request_id, rx)
     }
 
     /// 用响应完成一个待处理请求
     /// 返回 true 表示成功匹配，false 表示 request_id 不存在
     pub async fn complete(&self, request_id: &str, response: T) -> bool {
-        if let Some(tx) = self.pending.lock().await.remove(request_id) {
-            tx.send(response).is_ok()
+        if let Some(entry) = self.pending.lock().await.remove(request_id) {
+            entry.sender.send(response).is_ok()
         } else {
             false
         }

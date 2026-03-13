@@ -23,6 +23,9 @@ api.interceptors.request.use(
   }
 );
 
+// 防止多个并发 401 响应同时触发登出跳转
+let isRedirectingToLogin = false;
+
 // 响应拦截器 - 处理错误
 api.interceptors.response.use(
   (response) => response,
@@ -49,13 +52,14 @@ api.interceptors.response.use(
         errorMessage.toLowerCase().includes('unauthorized') ||
         errorMessage.toLowerCase().includes('not authenticated');
 
-      if (isAuthError) {
+      if (isAuthError && !isRedirectingToLogin) {
+        isRedirectingToLogin = true;
         console.warn('认证失败，正在跳转到登录页...');
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         window.location.href = '/login';
         return Promise.reject(error);
-      } else {
+      } else if (!isAuthError) {
         // 其他401错误只记录日志，不登出用户
         console.error('权限不足:', url, errorMessage);
       }
@@ -72,3 +76,14 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+/** 从 localStorage 安全读取并解析 JSON，解析失败时返回 fallback */
+export function getStoredJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}

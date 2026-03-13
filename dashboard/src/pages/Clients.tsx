@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { clientService, userService, systemService } from '../lib/services';
-import type { Client, LogEntry } from '../lib/types';
+import type { Client, LogEntry, User } from '../lib/types';
 import { formatBytes, formatDate, copyToClipboard } from '../lib/utils';
 import { useToast } from '../contexts/ToastContext';
+import { getStoredJson } from '../lib/api';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { TableSkeleton } from '../components/Skeleton';
 import {
@@ -55,7 +56,7 @@ export default function Clients() {
     loadUserQuotaInfo();
 
     // 获取最新版本信息（仅管理员）
-    const authUser = JSON.parse(localStorage.getItem('user') || '{}');
+    const authUser = getStoredJson<Partial<User>>('user', {});
     if (authUser.is_admin) {
       systemService.getLatestVersion().then(res => {
         if (res.success && res.data) {
@@ -84,7 +85,7 @@ export default function Clients() {
 
   const loadUserQuotaInfo = async () => {
     try {
-      const authUser = JSON.parse(localStorage.getItem('user') || '{}');
+      const authUser = getStoredJson<Partial<User>>('user', {});
       if (authUser.id) {
         const response = await userService.getQuotaInfo(authUser.id);
         if (response.success && response.data) {

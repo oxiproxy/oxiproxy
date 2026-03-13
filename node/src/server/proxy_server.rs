@@ -404,9 +404,11 @@ impl ProxyServer {
         info!("⏳ 等待客户端连接...");
 
         // 接受客户端连接
+        let mut consecutive_errors: u32 = 0;
         while let Some(connecting) = endpoint.accept().await {
             match connecting.await {
                 Ok(conn) => {
+                    consecutive_errors = 0;
                     let remote_addr = conn.remote_address();
                     info!("📡 新连接来自: {}", remote_addr);
 
@@ -426,7 +428,14 @@ impl ProxyServer {
                     });
                 }
                 Err(e) => {
-                    error!("❌ 连接接受失败: {}", e);
+                    consecutive_errors = consecutive_errors.saturating_add(1);
+                    if consecutive_errors <= 3 {
+                        error!("❌ 连接接受失败: {}", e);
+                    } else if consecutive_errors % 100 == 0 {
+                        error!("❌ 连接接受持续失败 (已连续 {} 次): {}", consecutive_errors, e);
+                    }
+                    let backoff = Duration::from_millis(100 * (consecutive_errors.min(50) as u64));
+                    tokio::time::sleep(backoff).await;
                 }
             }
         }
@@ -443,9 +452,11 @@ impl ProxyServer {
         info!("KCP listening on: {}", bind_addr);
         info!("Waiting for KCP client connections...");
 
+        let mut consecutive_errors: u32 = 0;
         loop {
             match listener.accept().await {
                 Ok(conn) => {
+                    consecutive_errors = 0;
                     let remote_addr = conn.remote_address();
                     info!("New KCP connection from: {}", remote_addr);
 
@@ -471,7 +482,14 @@ impl ProxyServer {
                     });
                 }
                 Err(e) => {
-                    error!("KCP connection accept failed: {}", e);
+                    consecutive_errors = consecutive_errors.saturating_add(1);
+                    if consecutive_errors <= 3 {
+                        error!("KCP connection accept failed: {}", e);
+                    } else if consecutive_errors % 100 == 0 {
+                        error!("KCP connection accept keeps failing ({} times): {}", consecutive_errors, e);
+                    }
+                    let backoff = Duration::from_millis(100 * (consecutive_errors.min(50) as u64));
+                    tokio::time::sleep(backoff).await;
                 }
             }
         }
@@ -486,9 +504,11 @@ impl ProxyServer {
         info!("TCP listening on: {}", bind_addr);
         info!("Waiting for TCP client connections...");
 
+        let mut consecutive_errors: u32 = 0;
         loop {
             match listener.accept().await {
                 Ok(conn) => {
+                    consecutive_errors = 0;
                     let remote_addr = conn.remote_address();
                     info!("New TCP tunnel connection from: {}", remote_addr);
 
@@ -514,7 +534,14 @@ impl ProxyServer {
                     });
                 }
                 Err(e) => {
-                    error!("TCP tunnel connection accept failed: {}", e);
+                    consecutive_errors = consecutive_errors.saturating_add(1);
+                    if consecutive_errors <= 3 {
+                        error!("TCP tunnel connection accept failed: {}", e);
+                    } else if consecutive_errors % 100 == 0 {
+                        error!("TCP tunnel connection accept keeps failing ({} times): {}", consecutive_errors, e);
+                    }
+                    let backoff = Duration::from_millis(100 * (consecutive_errors.min(50) as u64));
+                    tokio::time::sleep(backoff).await;
                 }
             }
         }
@@ -1025,9 +1052,11 @@ async fn run_tcp_proxy_listener_unified(
     let listener = TcpListener::bind(&listen_addr).await?;
     info!("[{}] 🔌 TCP监听端口: {} -> {}", proxy_name, listen_addr, target_addr);
 
+    let mut consecutive_errors: u32 = 0;
     loop {
         match listener.accept().await {
             Ok((tcp_stream, addr)) => {
+                consecutive_errors = 0;
                 info!("[{}] 📥 新连接来自: {}", proxy_name, addr);
 
                 let conn_provider_clone = conn_provider.clone();
@@ -1054,7 +1083,14 @@ async fn run_tcp_proxy_listener_unified(
                 });
             }
             Err(e) => {
-                error!("[{}] ❌ 接受连接失败: {}", proxy_name, e);
+                consecutive_errors = consecutive_errors.saturating_add(1);
+                if consecutive_errors <= 3 {
+                    error!("[{}] ❌ 接受连接失败: {}", proxy_name, e);
+                } else if consecutive_errors % 100 == 0 {
+                    error!("[{}] ❌ 接受连接持续失败 (已连续 {} 次): {}", proxy_name, consecutive_errors, e);
+                }
+                let backoff = Duration::from_millis(100 * (consecutive_errors.min(50) as u64));
+                tokio::time::sleep(backoff).await;
             }
         }
     }
@@ -1218,6 +1254,7 @@ async fn handle_tcp_to_tunnel_unified(
                 None => break,
             }
         }
+        let _ = tcp_write.shutdown().await;
         Ok::<_, anyhow::Error>(())
     };
 

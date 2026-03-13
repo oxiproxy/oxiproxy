@@ -181,9 +181,19 @@ pub async fn create_proxy(
 
     let db = get_connection().await;
 
+    // 解析 client_id
+    let parsed_client_id: i64 = match req.client_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                ApiResponse::<crate::entity::proxy::Model>::error(format!("无效的客户端 ID: {}", req.client_id)),
+            )
+        }
+    };
+
     // 获取客户端信息以验证端口限制
-    let client = match crate::entity::Client::find()
-        .filter(crate::entity::client::Column::Id.eq(req.client_id.parse::<i64>().unwrap_or(0)))
+    let client = match crate::entity::Client::find_by_id(parsed_client_id)
         .one(db)
         .await
     {
@@ -245,28 +255,7 @@ pub async fn create_proxy(
 
         // 如果是独享节点，需要检查用户是否有权限
         if node.node_type == "dedicated" && !auth_user.is_admin {
-            // 获取客户端所属用户
-            let client = match crate::entity::Client::find()
-                .filter(crate::entity::client::Column::Id.eq(req.client_id.parse::<i64>().unwrap_or(0)))
-                .one(db)
-                .await
-            {
-                Ok(Some(c)) => c,
-                Ok(None) => {
-                    return (
-                        StatusCode::NOT_FOUND,
-                        ApiResponse::<crate::entity::proxy::Model>::error("客户端不存在".to_string()),
-                    )
-                }
-                Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        ApiResponse::<crate::entity::proxy::Model>::error(format!("查询客户端失败: {}", e)),
-                    )
-                }
-            };
-
-            // 检查客户端是否属于当前用户
+            // 检查客户端是否属于当前用户（复用已查询的 client）
             if client.user_id != Some(auth_user.id) {
                 return (
                     StatusCode::FORBIDDEN,
@@ -736,8 +725,11 @@ pub async fn batch_create_proxies(
     let db = get_connection().await;
 
     // 验证客户端
-    let client = match crate::entity::Client::find()
-        .filter(crate::entity::client::Column::Id.eq(req.client_id.parse::<i64>().unwrap_or(0)))
+    let parsed_client_id: i64 = match req.client_id.parse() {
+        Ok(id) => id,
+        Err(_) => return (StatusCode::BAD_REQUEST, ApiResponse::<Vec<crate::entity::proxy::Model>>::error(format!("无效的客户端 ID: {}", req.client_id))),
+    };
+    let client = match crate::entity::Client::find_by_id(parsed_client_id)
         .one(db)
         .await
     {

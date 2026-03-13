@@ -244,9 +244,9 @@ pub async fn create_user(
 
     match new_user.insert(db).await {
         Ok(user) => {
-            // Log generated password if random
+            // Log user creation (without password)
             if req.password.is_none() {
-                tracing::info!("Generated password for user '{}': {}", user.username, password);
+                tracing::info!("为用户 '{}' 生成了随机密码（已通过 API 响应返回）", user.username);
             }
 
             // Return user without password hash

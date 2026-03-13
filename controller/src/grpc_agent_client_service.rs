@@ -139,7 +139,10 @@ impl AgentClientService for AgentClientServiceImpl {
                 error!("更新客户端 #{} 在线状态失败: {}", client_id, e);
             }
 
-            // 3. 立即推送当前代理列表
+            // 3. 先注册到 ClientStreamManager（避免注册前丢失代理更新通知）
+            client_stream_manager.register(client_id, tx.clone()).await;
+
+            // 4. 再推送当前代理列表（注册后推送，确保期间的变更不会丢失）
             match client_stream_manager.build_proxy_list_update(client_id).await {
                 Ok(update) => {
                     let msg = oxiproxy::ControllerToClientMessage {
@@ -153,9 +156,6 @@ impl AgentClientService for AgentClientServiceImpl {
                     error!("构建初始代理列表失败: {}", e);
                 }
             }
-
-            // 4. 注册到 ClientStreamManager
-            client_stream_manager.register(client_id, tx.clone()).await;
 
             // 5. 消息处理循环（主要处理心跳）
             while let Some(result) = in_stream.next().await {

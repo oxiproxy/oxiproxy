@@ -268,8 +268,8 @@ async fn handle_udp_proxy(
     socket.set_ttl(64)?;
 
     // Loop to receive responses from target and forward back to server
+    let mut response_buf = vec![0u8; 65535];
     loop {
-        let mut response_buf = vec![0u8; 65535];
         tokio::select! {
             // Read data from QUIC (more UDP packets from server)
             result = quic_recv.read(&mut recv_buf) => {
