@@ -82,7 +82,7 @@ cd /opt/oxiproxy
 curl -fsSL https://raw.githubusercontent.com/oxiproxy/oxiproxy/master/install.sh | bash
 # 选择安装 node
 
-/opt/oxiproxy/node --controller-url http://your-server-ip:3100 --token <node-token>
+/opt/oxiproxy/node start --controller-url http://your-server-ip:3100 --token <node-token>
 ```
 
 **安装 Client（内网机器上）：**
@@ -91,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/oxiproxy/oxiproxy/master/install.sh
 curl -fsSL https://raw.githubusercontent.com/oxiproxy/oxiproxy/master/install.sh | bash
 # 选择安装 client
 
-/opt/oxiproxy/client --controller-url http://your-server-ip:3100 --token <client-token>
+/opt/oxiproxy/client start --controller-url http://your-server-ip:3100 --token <client-token>
 ```
 
 ### 使用示例
@@ -137,19 +137,19 @@ curl -fsSL https://raw.githubusercontent.com/oxiproxy/oxiproxy/master/install.sh
 /opt/oxiproxy/controller
 
 # Node（隧道端口由 Controller 下发，无需手动指定）
-/opt/oxiproxy/node --controller-url http://controller-ip:3100 --token <node-token>
+/opt/oxiproxy/node start --controller-url http://controller-ip:3100 --token <node-token>
 
 # Client
-/opt/oxiproxy/client --controller-url http://controller-ip:3100 --token <client-token>
+/opt/oxiproxy/client start --controller-url http://controller-ip:3100 --token <client-token>
 ```
 
 <details>
 <summary><b>守护进程模式（后台运行）</b></summary>
 
 ```bash
-# Linux/macOS —— 使用 --daemon 参数
-/opt/oxiproxy/node --controller-url http://controller-ip:3100 --token <token> --daemon
-/opt/oxiproxy/client --controller-url http://controller-ip:3100 --token <token> --daemon
+# Linux/macOS —— 使用 daemon 子命令
+/opt/oxiproxy/node daemon --controller-url http://controller-ip:3100 --token <token>
+/opt/oxiproxy/client daemon --controller-url http://controller-ip:3100 --token <token>
 
 # 或配置为 systemd 服务（见下方）
 ```
@@ -189,7 +189,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/opt/oxiproxy/node --controller-url http://controller-ip:3100 --token your-node-token
+ExecStart=/opt/oxiproxy/node start --controller-url http://controller-ip:3100 --token your-node-token
 Restart=always
 
 [Install]
@@ -209,7 +209,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/opt/oxiproxy/client --controller-url http://controller-ip:3100 --token your-client-token
+ExecStart=/opt/oxiproxy/client start --controller-url http://controller-ip:3100 --token your-client-token
 Restart=always
 
 [Install]
@@ -227,14 +227,14 @@ sudo systemctl enable --now oxiproxy-client
 
 ```powershell
 # 安装为 Windows 服务（需要管理员权限）
-.\client.exe --install-service --controller-url http://your-server-ip:3100 --token your-client-token
+.\client.exe install-service --controller-url http://your-server-ip:3100 --token your-client-token
 
 # 启动/停止服务
 sc start OxiProxyClient
 sc stop OxiProxyClient
 
 # 卸载服务
-.\client.exe --uninstall-service
+.\client.exe uninstall-service
 ```
 
 </details>
@@ -291,6 +291,7 @@ services:
       - RUST_LOG=info,tokio_kcp=off
     command:
       - /app/client
+      - start
       - --controller-url
       - http://your-server-ip:3100
       - --token
@@ -342,7 +343,7 @@ docker run -d --name oxiproxy-node --restart unless-stopped \
   -p 7000:7000/udp -p 7000:7000/tcp \
   -e TZ=Asia/Shanghai -e RUST_LOG=info,tokio_kcp=off \
   ghcr.io/oxiproxy/oxiproxy:latest \
-  /app/node --controller-url http://your-controller-ip:3100 --token your-node-token
+  /app/node start --controller-url http://your-controller-ip:3100 --token your-node-token
 ```
 
 > Node 隧道端口由 Controller 下发，默认使用 QUIC (UDP)。如使用 TCP 协议，需同时放行 TCP 端口。
@@ -357,7 +358,7 @@ docker run -d --name oxiproxy-client --restart unless-stopped \
   --network host \
   -e TZ=Asia/Shanghai -e RUST_LOG=info,tokio_kcp=off \
   ghcr.io/oxiproxy/oxiproxy:latest \
-  /app/client --controller-url http://your-controller-ip:3100 --token your-client-token
+  /app/client start --controller-url http://your-controller-ip:3100 --token your-client-token
 ```
 
 </details>
@@ -446,24 +447,46 @@ sudo firewall-cmd --reload
 
 ### Node 命令行参数
 
+Node 使用子命令模式：`node <子命令> [参数]`
+
+| 子命令 | 说明 |
+|--------|------|
+| `start` | 前台运行节点服务器 |
+| `daemon` | 以守护进程模式运行（含 `--pid-file`、`--log-dir`） |
+| `stop` | 停止运行中的守护进程（含 `--pid-file`） |
+| `update` | 自动更新到最新版本 |
+
+**`start` / `daemon` 通用参数：**
+
 | 参数 | 说明 | 必需 |
 |------|------|------|
 | `--controller-url` | Controller gRPC 地址（如 `http://server:3100`） | 是 |
 | `--token` | 节点认证令牌 | 是 |
 | `--protocol` | 隧道协议（quic/kcp/tcp），默认 quic | 否 |
-| `--daemon` | 守护进程模式（仅 Unix） | 否 |
+| `--tls-ca-cert` | 自定义 CA 证书文件路径（PEM 格式） | 否 |
+| `--log-dir` | 日志目录路径（按天自动分割） | 否 |
 
 ### Client 命令行参数
+
+Client 使用子命令模式：`client <子命令> [参数]`
+
+| 子命令 | 说明 |
+|--------|------|
+| `start` | 前台运行客户端 |
+| `daemon` | 以守护进程模式运行（含 `--pid-file`、`--log-dir`） |
+| `stop` | 停止运行中的守护进程（含 `--pid-file`） |
+| `install-service` | 安装为 Windows 服务（仅 Windows） |
+| `uninstall-service` | 卸载 Windows 服务（仅 Windows） |
+| `update` | 自动更新到最新版本 |
+
+**`start` / `daemon` 通用参数：**
 
 | 参数 | 说明 | 必需 |
 |------|------|------|
 | `--controller-url` | Controller gRPC 地址（如 `http://server:3100`） | 是 |
 | `--token` | 客户端认证令牌 | 是 |
-| `--daemon` | 守护进程模式（仅 Unix） | 否 |
-| `--pid-file` | PID 文件路径（守护进程模式） | 否 |
-| `--log-file` | 日志文件路径（守护进程模式） | 否 |
-| `--install-service` | 安装为 Windows 服务 | 否 |
-| `--uninstall-service` | 卸载 Windows 服务 | 否 |
+| `--tls-ca-cert` | 自定义 CA 证书文件路径（PEM 格式） | 否 |
+| `--log-dir` | 日志目录路径（按天自动分割） | 否 |
 
 ## Web 管理界面
 
@@ -673,10 +696,10 @@ cargo build --release
 cargo run --release -p controller
 
 # 运行 Node
-cargo run --release -p node -- --controller-url http://localhost:3100 --token <token>
+cargo run --release -p node -- start --controller-url http://localhost:3100 --token <token>
 
 # 运行 Client
-cargo run --release -p client -- --controller-url http://localhost:3100 --token <token>
+cargo run --release -p client -- start --controller-url http://localhost:3100 --token <token>
 
 # 开发 Dashboard
 cd dashboard && bun install && bun run dev

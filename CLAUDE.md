@@ -85,11 +85,11 @@ cargo build --release
 # 运行 Controller
 cargo run --release -p controller
 
-# 运行 Node（节点服务器）
-cargo run --release -p node -- --controller-url http://localhost:3100 --token <token>
+# 运行 Node（节点服务器，隧道端口由 Controller 下发）
+cargo run --release -p node -- start --controller-url http://localhost:3100 --token <token>
 
 # 运行 Client（客户端）
-cargo run --release -p client -- --controller-url http://localhost:3100 --token <token>
+cargo run --release -p client -- start --controller-url http://localhost:3100 --token <token>
 
 # 运行所有测试
 cargo test
@@ -148,7 +148,7 @@ bun run lint
 - `api/handlers/` - RESTful API handlers（auth, user, client, proxy, node, traffic, dashboard, subscription, system_config）
 - `middleware/auth.rs` - JWT 认证中间件，提取 `AuthUser { id, username, is_admin }`
 - `entity/` - SeaORM 数据库实体
-- `migration/` - 数据库迁移（28 个迁移文件）
+- `migration/` - 数据库迁移（37 个迁移文件）
 - `traffic.rs` - 流量记录和统计
 - `traffic_limiter.rs` - 流量配额验证逻辑
 - `port_limiter.rs` - 用户端口范围限制
@@ -157,17 +157,22 @@ bun run lint
 
 ### Node (node/src/)
 
-- `main.rs` - 启动入口，CLI 参数解析（clap）。支持 `--daemon`（Unix）
+- `main.rs` - 启动入口，CLI 子命令解析（clap）：`start`、`daemon`、`stop`、`update`
 - `server/` - 节点服务器实现
-  - `proxy_server.rs` - QUIC/KCP 代理服务器
+  - `proxy_server.rs` - QUIC/KCP/TCP 代理服务器（含连接失败退避和日志抑制）
   - `grpc_client.rs` - 连接到 Controller 的 gRPC 客户端（自动重连）
   - `local_proxy_control.rs` - 本地代理控制实现（实现 ProxyControl trait）
+  - `tunnel_manager.rs` - 隧道生命周期管理（端口由 Controller 下发）
+  - `speed_limiter.rs` - 速度限制器
+  - `config_manager.rs` - 节点配置管理
   - `traffic.rs` - 流量记录、批量上报
-  - `node_logs.rs` - 内存日志缓冲区（自定义 tracing layer）
+  - `node_logs.rs` - 节点内存日志缓冲区（自定义 tracing layer）
+  - `client_logs.rs` - 客户端日志收集代理
+  - `grpc_auth_provider.rs` - gRPC 认证提供者
 
 ### Client (client/src/)
 
-- `main.rs` - 启动入口。Unix: 支持 `--daemon`。Windows: 支持 `--install-service` / `--uninstall-service`
+- `main.rs` - 启动入口，CLI 子命令：`start`、`daemon`、`stop`、`update`。Windows 额外支持 `install-service` / `uninstall-service`
 - `client/` - 客户端实现
   - `grpc_client.rs` - 连接到 Controller，接收 ProxyListUpdate
   - `connection_manager.rs` - 隧道连接协调（desired vs actual 状态协调）
@@ -182,14 +187,14 @@ bun run lint
   - `traits.rs` - 统一的 TunnelSendStream/RecvStream/Connection/Connector/Listener trait
   - `quic.rs` - QUIC 实现（quinn + rcgen 自签名证书）
   - `kcp.rs` - KCP 实现（tokio_kcp + yamux 多路复用）
-- `grpc/pending_requests.rs` - request_id 请求-响应匹配工具
+- `grpc/pending_requests.rs` - request_id 请求-响应匹配工具（含 60 秒过期自动清理）
 - `protocol/` - 共享 trait 定义（ProxyControl, ClientAuthProvider, traffic 等）
 
 ### Dashboard (dashboard/src/)
 
 技术栈：React 19 + TypeScript 5.9 + rolldown-vite（别名为 vite）+ shadcn/ui + Radix UI + Tailwind CSS 4 + Lucide 图标 + Babel React Compiler
 
-- `lib/services.ts` - Axios API 客户端
+- `lib/api.ts` - Axios API 客户端 + `getStoredJson` 安全 localStorage 工具
 - `lib/types.ts` - TypeScript 类型定义
 - `pages/` - React 页面组件（Dashboard, Users, Clients, Nodes, Proxies, Subscriptions）
 - `contexts/` - AuthContext（认证状态）、ToastContext（通知）
@@ -263,15 +268,15 @@ Controller 启动两个后台任务（每 30 秒）：
 
 ### 平台特定功能
 
-- **Unix**：Node 和 Client 支持 `--daemon` 模式（daemonize crate），含 `--pid-file` 和 `--log-file` 参数
-- **Windows**：Client 支持 `--install-service` / `--uninstall-service`（windows-service crate），服务名 `OxiProxyClient`
+- **Unix**：Node 和 Client 支持 `daemon` 子命令（daemonize crate），含 `--pid-file` 和 `--log-dir` 参数
+- **Windows**：Client 支持 `install-service` / `uninstall-service` 子命令（windows-service crate），服务名 `OxiProxyClient`
 
 ## 端口配置
 
 默认端口：
 - **3000** - Web 管理界面 (HTTP)，Config 中的 `web_port`
 - **3100** - Controller gRPC API，Config 中的 `internal_port`
-- **7000** - Node 隧道端口 (QUIC/KCP, UDP)
+- 隧道端口由 Controller 下发给 Node（默认 7000，可在管理界面配置）
 
 ## 环境变量
 

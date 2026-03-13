@@ -32,6 +32,7 @@ services:
     # 注意: ${CONTROLLER_URL} 等变量从 .env 文件或宿主机环境变量读取
     command:
       - /app/client
+      - start
       - --controller-url
       - ${CONTROLLER_URL}
       - --token
