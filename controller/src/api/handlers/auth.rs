@@ -227,6 +227,11 @@ pub async fn register(
 
     // 创建用户
     let now = Utc::now().naive_utc();
+    let cm = &app_state.config_manager;
+    let default_quota = cm.get_float("default_traffic_quota_gb", 0.0).await;
+    let default_max_port = cm.get_number("default_max_port_count", 0).await as i32;
+    let default_max_node = cm.get_number("default_max_node_count", 0).await as i32;
+    let default_max_client = cm.get_number("default_max_client_count", 0).await as i32;
     let new_user = crate::entity::user::ActiveModel {
         id: NotSet,
         username: Set(username.clone()),
@@ -237,11 +242,11 @@ pub async fn register(
         traffic_reset_cycle: Set("none".to_string()),
         last_reset_at: Set(None),
         is_traffic_exceeded: Set(false),
-        traffic_quota_gb: Set(Some(0.0)),
-        max_port_count: Set(Some(0)),
+        traffic_quota_gb: Set(Some(default_quota)),
+        max_port_count: Set(Some(default_max_port)),
         allowed_port_range: Set(None),
-        max_node_count: Set(Some(0)),
-        max_client_count: Set(Some(0)),
+        max_node_count: Set(Some(default_max_node)),
+        max_client_count: Set(Some(default_max_client)),
         created_at: Set(now),
         updated_at: Set(now),
     };

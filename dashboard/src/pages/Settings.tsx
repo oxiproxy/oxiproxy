@@ -23,6 +23,10 @@ const configHints: Record<string, string> = {
   web_port: 'Web 管理界面的访问端口',
   internal_port: 'Node 和 Client 连接到 Controller 的 gRPC 端口',
   enable_registration: '开启后，任何人可以通过登录页面注册新账号',
+  default_traffic_quota_gb: '创建新用户时自动分配的流量配额，0 表示不限制',
+  default_max_port_count: '创建新用户时自动分配的最大端口数，0 表示不限制',
+  default_max_node_count: '创建新用户时自动分配的最大节点数，0 表示不限制',
+  default_max_client_count: '创建新用户时自动分配的最大客户端数，0 表示不限制',
   jwt_expiration_hours: 'JWT 令牌的有效期，过期后需要重新登录',
   db_path: '数据库文件的存储路径',
   grpc_tls_enabled: '启用后 gRPC 连接将使用 TLS 加密，可避免 GFW 干扰',
@@ -382,13 +386,16 @@ export default function Settings() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {configs.filter(c => ['web_port', 'internal_port', 'enable_registration'].includes(c.key)).map((config) => (
+            {configs.filter(c => ['web_port', 'internal_port', 'enable_registration', 'default_traffic_quota_gb', 'default_max_port_count', 'default_max_node_count', 'default_max_client_count'].includes(c.key)).map((config) => (
               <div key={config.key} className="space-y-2">
                 <Label className="text-foreground">
                   {config.description}
                 </Label>
                 <div className="flex items-center gap-3">
                   {renderConfigInput(config)}
+                  {config.valueType === 'number' && config.key === 'default_traffic_quota_gb' && (
+                    <span className="text-sm text-muted-foreground">GB</span>
+                  )}
                   {config.valueType === 'number' && config.key.includes('hours') && (
                     <span className="text-sm text-muted-foreground">小时</span>
                   )}

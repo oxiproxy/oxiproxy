@@ -898,7 +898,7 @@ async fn handle_tunnel_proxy_stream(
 
     // Tunnel -> TCP
     let tunnel_to_tcp = async {
-        let mut buf = vec![0u8; 8192];
+        let mut buf = vec![0u8; 32768];
         loop {
             match tunnel_recv.read(&mut buf).await? {
                 Some(n) => {
@@ -910,12 +910,13 @@ async fn handle_tunnel_proxy_stream(
                 None => break,
             }
         }
+        let _ = tcp_write.shutdown().await;
         Ok::<_, anyhow::Error>(())
     };
 
     // TCP -> Tunnel
     let tcp_to_tunnel = async {
-        let mut buf = vec![0u8; 8192];
+        let mut buf = vec![0u8; 32768];
         loop {
             let n = tcp_read.read(&mut buf).await?;
             if n == 0 {
@@ -923,23 +924,17 @@ async fn handle_tunnel_proxy_stream(
             }
             tunnel_send.write_all(&buf[..n]).await?;
         }
+        let _ = tunnel_send.finish().await;
         Ok::<_, anyhow::Error>(())
     };
 
-    tokio::select! {
-        res = tunnel_to_tcp => {
-            if let Err(e) = res {
-                error!("Tunnel->TCP error: {}", e);
-            }
-        }
-        res = tcp_to_tunnel => {
-            if let Err(e) = res {
-                error!("TCP->Tunnel error: {}", e);
-            }
-        }
+    let (res1, res2) = tokio::join!(tunnel_to_tcp, tcp_to_tunnel);
+    if let Err(e) = res1 {
+        error!("Tunnel->TCP error: {}", e);
     }
-
-    tunnel_send.finish().await?;
+    if let Err(e) = res2 {
+        error!("TCP->Tunnel error: {}", e);
+    }
 
     Ok(())
 }
@@ -974,7 +969,7 @@ async fn handle_proxy_stream(
 
     // QUIC -> TCP
     let quic_to_tcp = async {
-        let mut buf = vec![0u8; 8192];
+        let mut buf = vec![0u8; 32768];
         loop {
             match quic_recv.read(&mut buf).await? {
                 Some(n) => {
@@ -986,12 +981,13 @@ async fn handle_proxy_stream(
                 None => break,
             }
         }
+        let _ = tcp_write.shutdown().await;
         Ok::<_, anyhow::Error>(())
     };
 
     // TCP -> QUIC
     let tcp_to_quic = async {
-        let mut buf = vec![0u8; 8192];
+        let mut buf = vec![0u8; 32768];
         loop {
             let n = tcp_read.read(&mut buf).await?;
             if n == 0 {
@@ -999,23 +995,17 @@ async fn handle_proxy_stream(
             }
             quic_send.write_all(&buf[..n]).await?;
         }
+        quic_send.finish()?;
         Ok::<_, anyhow::Error>(())
     };
 
-    tokio::select! {
-        res = quic_to_tcp => {
-            if let Err(e) = res {
-                error!("QUIC->TCP错误: {}", e);
-            }
-        }
-        res = tcp_to_quic => {
-            if let Err(e) = res {
-                error!("TCP->QUIC错误: {}", e);
-            }
-        }
+    let (res1, res2) = tokio::join!(quic_to_tcp, tcp_to_quic);
+    if let Err(e) = res1 {
+        error!("QUIC->TCP错误: {}", e);
     }
-
-    quic_send.finish()?;
+    if let Err(e) = res2 {
+        error!("TCP->QUIC错误: {}", e);
+    }
 
     Ok(())
 }
@@ -1195,7 +1185,7 @@ async fn handle_tcp_to_tunnel_unified(
     let proxy_name_t2t = proxy_name.clone();
     let speed_limiter_t2t = speed_limiter.clone();
     let tcp_to_tunnel = async move {
-        let mut buf = vec![0u8; 8192];
+        let mut buf = vec![0u8; 32768];
         loop {
             let n = tcp_read.read(&mut buf).await?;
             if n == 0 {
@@ -1214,7 +1204,7 @@ async fn handle_tcp_to_tunnel_unified(
     let proxy_name_t2c = proxy_name.clone();
     let speed_limiter_t2c = speed_limiter.clone();
     let tunnel_to_tcp = async move {
-        let mut buf = vec![0u8; 8192];
+        let mut buf = vec![0u8; 32768];
         loop {
             match tunnel_recv.read(&mut buf).await? {
                 Some(n) => {

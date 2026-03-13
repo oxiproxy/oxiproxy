@@ -198,9 +198,9 @@ async fn handle_tcp_proxy(
 
     let (mut tcp_read, mut tcp_write) = tcp_stream.split();
 
-    // QUIC -> TCP
-    let quic_to_tcp = async {
-        let mut buf = vec![0u8; 8192];
+    // Tunnel -> TCP
+    let tunnel_to_tcp = async {
+        let mut buf = vec![0u8; 32768];
         loop {
             match quic_recv.read(&mut buf).await? {
                 Some(n) => {
@@ -212,12 +212,13 @@ async fn handle_tcp_proxy(
                 None => break,
             }
         }
+        let _ = tcp_write.shutdown().await;
         Ok::<_, anyhow::Error>(())
     };
 
-    // TCP -> QUIC
-    let tcp_to_quic = async {
-        let mut buf = vec![0u8; 8192];
+    // TCP -> Tunnel
+    let tcp_to_tunnel = async {
+        let mut buf = vec![0u8; 32768];
         loop {
             let n = tcp_read.read(&mut buf).await?;
             if n == 0 {
@@ -225,24 +226,17 @@ async fn handle_tcp_proxy(
             }
             quic_send.write_all(&buf[..n]).await?;
         }
+        let _ = quic_send.finish().await;
         Ok::<_, anyhow::Error>(())
     };
 
-    tokio::select! {
-        res = quic_to_tcp => {
-            if let Err(e) = res {
-                debug!("QUIC->TCP 传输结束: {}", e);
-            }
-        }
-        res = tcp_to_quic => {
-            if let Err(e) = res {
-                debug!("TCP->QUIC 传输结束: {}", e);
-            }
-        }
+    let (res1, res2) = tokio::join!(tunnel_to_tcp, tcp_to_tunnel);
+    if let Err(e) = res1 {
+        debug!("Tunnel->TCP 传输结束: {}", e);
     }
-
-    // Close QUIC stream
-    quic_send.finish().await?;
+    if let Err(e) = res2 {
+        debug!("TCP->Tunnel 传输结束: {}", e);
+    }
 
     Ok(())
 }

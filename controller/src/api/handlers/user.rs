@@ -12,6 +12,7 @@ use crate::{
     entity::{User, UserNode, Node},
     migration::get_connection,
     middleware::AuthUser,
+    AppState,
 };
 
 use super::ApiResponse;
@@ -171,6 +172,7 @@ pub async fn list_users(Extension(auth_user_opt): Extension<Option<AuthUser>>) -
 /// POST /api/users - Create a new user (admin only)
 pub async fn create_user(
     Extension(auth_user_opt): Extension<Option<AuthUser>>,
+    Extension(app_state): Extension<AppState>,
     Json(req): Json<CreateUserRequest>,
 ) -> impl IntoResponse {
     let auth_user = match auth_user_opt {
@@ -216,6 +218,11 @@ pub async fn create_user(
 
     // Create user
     let now = Utc::now().naive_utc();
+    let cm = &app_state.config_manager;
+    let default_quota = cm.get_float("default_traffic_quota_gb", 0.0).await;
+    let default_max_port = cm.get_number("default_max_port_count", 0).await as i32;
+    let default_max_node = cm.get_number("default_max_node_count", 0).await as i32;
+    let default_max_client = cm.get_number("default_max_client_count", 0).await as i32;
     let new_user = crate::entity::user::ActiveModel {
         id: NotSet,
         username: Set(req.username),
@@ -223,14 +230,14 @@ pub async fn create_user(
         is_admin: Set(req.is_admin.unwrap_or(false)),
         total_bytes_sent: Set(0),
         total_bytes_received: Set(0),
-        traffic_quota_gb: Set(Some(req.traffic_quota_gb.unwrap_or(0.0))),
+        traffic_quota_gb: Set(Some(req.traffic_quota_gb.unwrap_or(default_quota))),
         traffic_reset_cycle: Set(req.traffic_reset_cycle.unwrap_or_else(|| "none".to_string())),
         last_reset_at: Set(None),
         is_traffic_exceeded: Set(false),
-        max_port_count: Set(Some(req.max_port_count.unwrap_or(0))),
+        max_port_count: Set(Some(req.max_port_count.unwrap_or(default_max_port))),
         allowed_port_range: Set(None),
-        max_node_count: Set(Some(req.max_node_count.unwrap_or(0))),
-        max_client_count: Set(Some(req.max_client_count.unwrap_or(0))),
+        max_node_count: Set(Some(req.max_node_count.unwrap_or(default_max_node))),
+        max_client_count: Set(Some(req.max_client_count.unwrap_or(default_max_client))),
         created_at: Set(now),
         updated_at: Set(now),
     };

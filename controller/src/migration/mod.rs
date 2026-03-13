@@ -39,6 +39,7 @@ mod m20260301_000003_add_user_quotas;
 mod m20260301_000004_add_subscription_quotas;
 mod m20260301_000005_add_subscription_quota_snapshots;
 mod m20260302_000001_add_version_fields;
+mod m20260313_000001_add_default_quota_config;
 
 pub struct Migrator;
 
@@ -81,6 +82,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260301_000004_add_subscription_quotas::Migration),
             Box::new(m20260301_000005_add_subscription_quota_snapshots::Migration),
             Box::new(m20260302_000001_add_version_fields::Migration),
+            Box::new(m20260313_000001_add_default_quota_config::Migration),
         ]
     }
 }

@@ -281,14 +281,14 @@ Controller 启动两个后台任务（每 30 秒）：
 
 ## Docker
 
-多阶段构建（`Dockerfile`）：
+多阶段构建（`docker/Dockerfile`）：
 1. `node:20-alpine` - 构建前端
 2. `rust:alpine` - 编译 Rust（带依赖缓存优化）
 3. `alpine:latest` - 最终镜像（包含 controller、node、client 二进制文件 + 前端静态文件）
 
 Docker Compose 文件：
-- `docker-compose.yml` - 全栈部署
-- `docker-compose.controller.yml` / `docker-compose.node.yml` / `docker-compose.client.yml` - 独立组件部署
+- `docker/docker-compose.yml` - 全栈部署
+- `docker/docker-compose.controller.yml` / `docker/docker-compose.node.yml` / `docker/docker-compose.client.yml` - 独立组件部署
 
 ## 常见问题排查
 
