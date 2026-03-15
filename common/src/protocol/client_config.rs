@@ -59,6 +59,9 @@ pub struct ServerProxyGroup {
     pub kcp: Option<KcpConfig>,
     /// 该 Server 上的代理列表
     pub proxies: Vec<ProxyInfo>,
+    /// 证书指纹列表（用于 QUIC 证书验证）
+    #[serde(default)]
+    pub cert_fingerprints: Vec<String>,
 }
 
 /// 轮询响应中的代理信息

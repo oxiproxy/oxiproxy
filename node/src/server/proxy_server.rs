@@ -1,6 +1,7 @@
 use anyhow::Result;
 use quinn::{Endpoint, ServerConfig, TransportConfig, VarInt};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls_pemfile;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -311,15 +312,34 @@ impl ProxyServer {
         config_manager: Arc<ConfigManager>,
         auth_provider: Arc<dyn common::protocol::auth::ClientAuthProvider>,
         speed_limiter: Arc<super::speed_limiter::SpeedLimiter>,
+        cert_pem: Option<String>,
+        key_pem: Option<String>,
     ) -> Result<Self> {
-        let cert = rcgen::generate_simple_self_signed(&["oxiproxy".to_string()])?;
+        // 使用 Controller 下发的证书，如果没有则生成临时证书
+        let (cert, key) = if let (Some(cert_pem), Some(key_pem)) = (cert_pem, key_pem) {
+            info!("✅ 使用 Controller 下发的节点证书");
+            let cert_der = rustls_pemfile::certs(&mut cert_pem.as_bytes())
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("无法解析证书 PEM"))??;
+            let key_der = rustls_pemfile::private_key(&mut key_pem.as_bytes())?
+                .ok_or_else(|| anyhow::anyhow!("无法解析私钥 PEM"))?;
+            (CertificateDer::from(cert_der), key_der)
+        } else {
+            warn!("⚠️  未收到 Controller 证书，生成临时自签名证书");
+            let temp_cert = rcgen::generate_simple_self_signed(&["oxiproxy".to_string()])?;
+            (
+                CertificateDer::from(temp_cert.cert.der().to_vec()),
+                PrivateKeyDer::from(PrivatePkcs8KeyDer::from(temp_cert.signing_key.serialize_der()))
+            )
+        };
+
         let listener_manager = Arc::new(ProxyListenerManager::new(traffic_manager.clone(), speed_limiter));
         let client_connections = Arc::new(RwLock::new(HashMap::new()));
         let tunnel_connections = Arc::new(RwLock::new(HashMap::new()));
 
         Ok(Self {
-            cert: CertificateDer::from(cert.cert.der().to_vec()),
-            key: PrivateKeyDer::from(PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der())),
+            cert,
+            key,
             traffic_manager,
             listener_manager,
             client_connections,

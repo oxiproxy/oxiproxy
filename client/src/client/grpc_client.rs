@@ -299,6 +299,7 @@ fn convert_server_groups(
                 protocol,
                 kcp,
                 proxies,
+                cert_fingerprints: g.cert_fingerprints,
             }
         })
         .collect()

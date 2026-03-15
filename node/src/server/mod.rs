@@ -56,7 +56,7 @@ pub async fn run_server_controller_mode(
     info!("隧道协议: {}", protocol);
 
     // 首次连接 Controller 并认证（protocol 作为回退值，最终以 Controller 返回为准）
-    let (grpc_client, cmd_rx, authoritative_protocol, initial_speed_limit, bind_port) = grpc_client::AgentGrpcClient::connect_and_authenticate(
+    let (grpc_client, cmd_rx, authoritative_protocol, initial_speed_limit, bind_port, node_certificate) = grpc_client::AgentGrpcClient::connect_and_authenticate(
         &controller_url,
         &token,
         &protocol,
@@ -65,6 +65,13 @@ pub async fn run_server_controller_mode(
 
     let node_id = grpc_client.node_id().await;
     info!("连接认证成功: 节点 #{}, Controller 协议: {}, 隧道端口: {}", node_id, authoritative_protocol, bind_port);
+
+    // 提取证书 PEM
+    let (cert_pem, key_pem) = if let Some(cert) = node_certificate {
+        (Some(cert.cert_pem), Some(cert.key_pem))
+    } else {
+        (None, None)
+    };
 
     // 创建速度限制器（0 表示不限速）
     let speed_limiter = speed_limiter::SpeedLimiter::new(initial_speed_limit.unwrap_or(0) as u64);
@@ -94,6 +101,8 @@ pub async fn run_server_controller_mode(
             config_manager.clone(),
             auth_provider.clone(),
             speed_limiter.clone(),
+            cert_pem,
+            key_pem,
         )?
     );
 
@@ -156,8 +165,13 @@ pub async fn run_server_controller_mode(
                         &protocol_clone,
                         tls_ca_cert_clone.as_deref(),
                     ).await {
-                        Ok((new_cmd_rx, new_protocol, new_speed_limit, new_tunnel_port)) => {
+                        Ok((new_cmd_rx, new_protocol, new_speed_limit, new_tunnel_port, new_certificate)) => {
                             info!("gRPC 重连成功");
+
+                            // 如果收到新证书，记录日志（暂不支持热更新证书，需要重启隧道）
+                            if let Some(cert) = new_certificate {
+                                info!("⚠️  收到新证书（指纹: {}），需要重启 Node 以应用", cert.fingerprint);
+                            }
 
                             // 更新速度限制
                             if let Some(limit) = new_speed_limit {

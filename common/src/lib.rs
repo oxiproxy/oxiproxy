@@ -22,6 +22,7 @@ pub use tunnel::{
     QuicConnection,
     QuicConnector,
     QuicListener,
+    CertVerificationMode,
     KcpSendStream,
     KcpRecvStream,
     KcpConnection,

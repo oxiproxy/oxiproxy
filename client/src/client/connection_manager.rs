@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing::{info, error, warn, debug};
 
-use common::{TunnelConnector, QuicConnector, KcpConnector, TcpTunnelConnector, TunnelProtocol};
+use common::{TunnelConnector, QuicConnector, KcpConnector, TcpTunnelConnector, TunnelProtocol, CertVerificationMode};
 use common::protocol::client_config::ServerProxyGroup;
 
 use crate::client::connector;
@@ -132,13 +132,25 @@ impl ConnectionManager {
         let cancel_clone = cancel_token.clone();
         let protocol = group.protocol.clone();
         let kcp_config = group.kcp.clone();
+        let cert_fingerprints = group.cert_fingerprints.clone();
 
         let handle = tokio::spawn(async move {
             loop {
                 // 创建连接器
                 let connector: Arc<dyn TunnelConnector> = match protocol {
                     TunnelProtocol::Quic => {
-                        match QuicConnector::new() {
+                        // 根据证书指纹列表选择验证模式
+                        let verification_mode = if cert_fingerprints.is_empty() {
+                            warn!("节点 #{} 未配置证书指纹，跳过证书验证（不安全）", node_id);
+                            CertVerificationMode::SkipVerification
+                        } else {
+                            let fingerprints: std::collections::HashSet<String> =
+                                cert_fingerprints.iter().cloned().collect();
+                            info!("节点 #{} 使用证书指纹验证（{} 个指纹）", node_id, fingerprints.len());
+                            CertVerificationMode::Fingerprint(fingerprints)
+                        };
+
+                        match QuicConnector::new(verification_mode) {
                             Ok(c) => Arc::new(c),
                             Err(e) => {
                                 error!("节点 #{} 创建 QUIC 连接器失败: {}", node_id, e);

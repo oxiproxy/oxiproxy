@@ -32,6 +32,7 @@ reqwest = { version = "0.12", default-features = false }
 # Tunnel server
 quinn = { version = "0.11", features = ["rustls", "ring"] }
 rcgen = "0.14.6"
+rustls-pemfile = "2"
 
 # gRPC
 tonic = { version = "0.12", features = ["tls", "tls-webpki-roots"] }

@@ -88,6 +88,14 @@ pub struct AgentGrpcClient {
     node_id: RwLock<i64>,
 }
 
+/// 节点证书数据
+#[derive(Debug, Clone)]
+pub struct NodeCertificate {
+    pub cert_pem: String,
+    pub key_pem: String,
+    pub fingerprint: String,
+}
+
 /// Controller 响应的包装类型
 #[derive(Clone)]
 pub enum ControllerResponse {
@@ -101,13 +109,13 @@ pub enum ControllerResponse {
 impl AgentGrpcClient {
     /// 连接 Controller 并认证节点
     ///
-    /// 返回 (gRPC 客户端, 命令接收器, Controller 下发的权威隧道协议, 速度限制, 隧道端口)
+    /// 返回 (gRPC 客户端, 命令接收器, Controller 下发的权威隧道协议, 速度限制, 隧道端口, 节点证书)
     pub async fn connect_and_authenticate(
         controller_url: &str,
         token: &str,
         tunnel_protocol: &str,
         tls_ca_cert: Option<&[u8]>,
-    ) -> Result<(Arc<Self>, mpsc::Receiver<ControllerCommand>, String, Option<i64>, u16)> {
+    ) -> Result<(Arc<Self>, mpsc::Receiver<ControllerCommand>, String, Option<i64>, u16, Option<NodeCertificate>)> {
         let mut endpoint = Channel::from_shared(controller_url.to_string())?
             .timeout(Duration::from_secs(30))
             .connect_timeout(Duration::from_secs(10))
@@ -188,6 +196,16 @@ impl AgentGrpcClient {
         info!("gRPC 连接认证成功: 节点 #{} ({}), 隧道协议: {}, 隧道端口: {}", node_id, register_resp.node_name, authoritative_protocol, tunnel_port);
         let speed_limit = register_resp.speed_limit;
 
+        // 提取证书数据
+        let node_certificate = register_resp.certificate.map(|cert| {
+            info!("✅ 收到节点证书（指纹: {}）", cert.fingerprint);
+            NodeCertificate {
+                cert_pem: cert.cert_pem,
+                key_pem: cert.key_pem,
+                fingerprint: cert.fingerprint,
+            }
+        });
+
         let shared_sender = SharedGrpcSender::new(tx.clone());
         let shared_pending = SharedPendingRequests::new(pending.clone());
 
@@ -211,19 +229,19 @@ impl AgentGrpcClient {
             Self::shared_heartbeat_loop(heartbeat_sender).await;
         });
 
-        Ok((grpc_client, cmd_rx, authoritative_protocol, speed_limit, tunnel_port))
+        Ok((grpc_client, cmd_rx, authoritative_protocol, speed_limit, tunnel_port, node_certificate))
     }
 
     /// 重连 Controller（复用已有的 SharedGrpcSender 和 SharedPendingRequests）
     ///
-    /// 返回 (命令接收器, Controller 下发的权威隧道协议, 速度限制, 隧道端口)
+    /// 返回 (命令接收器, Controller 下发的权威隧道协议, 速度限制, 隧道端口, 节点证书)
     pub async fn reconnect(
         self: &Arc<Self>,
         controller_url: &str,
         token: &str,
         tunnel_protocol: &str,
         tls_ca_cert: Option<&[u8]>,
-    ) -> Result<(mpsc::Receiver<ControllerCommand>, String, Option<i64>, u16)> {
+    ) -> Result<(mpsc::Receiver<ControllerCommand>, String, Option<i64>, u16, Option<NodeCertificate>)> {
         let mut endpoint = Channel::from_shared(controller_url.to_string())?;
 
         if controller_url.starts_with("https://") {
@@ -298,6 +316,16 @@ impl AgentGrpcClient {
         info!("gRPC 重连认证成功: 节点 #{} ({}), 隧道协议: {}, 隧道端口: {}", node_id, register_resp.node_name, authoritative_protocol, tunnel_port);
         let speed_limit = register_resp.speed_limit;
 
+        // 提取证书数据
+        let node_certificate = register_resp.certificate.map(|cert| {
+            info!("✅ 重连后收到节点证书（指纹: {}）", cert.fingerprint);
+            NodeCertificate {
+                cert_pem: cert.cert_pem,
+                key_pem: cert.key_pem,
+                fingerprint: cert.fingerprint,
+            }
+        });
+
         // 热替换 sender 和 pending
         self.shared_sender.replace(tx.clone()).await;
         self.shared_pending.replace(pending.clone()).await;
@@ -317,7 +345,7 @@ impl AgentGrpcClient {
             Self::shared_heartbeat_loop(heartbeat_sender).await;
         });
 
-        Ok((cmd_rx, authoritative_protocol, speed_limit, tunnel_port))
+        Ok((cmd_rx, authoritative_protocol, speed_limit, tunnel_port, node_certificate))
     }
 
     /// 消息接收循环
