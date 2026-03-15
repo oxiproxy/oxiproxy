@@ -120,6 +120,16 @@ message NodeRegisterResponse {
   string tunnel_protocol = 3;  // Controller 下发的权威隧道协议
   optional int64 speed_limit = 4;  // 速度限制(字节/秒)，0或不设=不限
   uint32 tunnel_port = 5;  // Controller 下发的隧道监听端口
+  optional NodeCertificate certificate = 6;  // 节点证书（自动生成）
+}
+
+// ===== 节点证书 =====
+
+message NodeCertificate {
+  string cert_pem = 1;  // 证书 PEM 格式
+  string key_pem = 2;   // 私钥 PEM 格式
+  string fingerprint = 3;  // SHA-256 指纹
+  int64 expires_at = 4;  // 过期时间戳（秒）
 }
 
 // ===== 认证 =====
@@ -323,6 +333,7 @@ message ServerProxyGroup {
   string protocol = 4;
   optional GrpcKcpConfig kcp = 5;
   repeated ProxyInfo proxies = 6;
+  repeated string cert_fingerprints = 7;  // 证书指纹列表（用于验证）
 }
 
 message ProxyInfo {

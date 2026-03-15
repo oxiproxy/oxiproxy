@@ -17,6 +17,7 @@ use common::protocol::control::LogEntry;
 
 use crate::entity::{Client, Node, Proxy, proxy, node};
 use crate::migration::get_connection;
+use crate::certificate_manager::CertificateManager;
 
 /// 单个客户端的流连接
 struct ClientStream {
@@ -278,6 +279,22 @@ impl ClientStreamManager {
                         nc: k.nc,
                     });
 
+                // 获取节点证书指纹
+                let cert_fingerprints = match CertificateManager::get_node_fingerprint(n.id).await {
+                    Ok(Some(fingerprint)) => {
+                        debug!("为节点 #{} 添加证书指纹: {}", n.id, fingerprint);
+                        vec![fingerprint]
+                    }
+                    Ok(None) => {
+                        debug!("节点 #{} 暂无证书指纹", n.id);
+                        vec![]
+                    }
+                    Err(e) => {
+                        error!("获取节点 #{} 证书指纹失败: {}", n.id, e);
+                        vec![]
+                    }
+                };
+
                 server_groups.push(oxiproxy::ServerProxyGroup {
                     node_id: n.id,
                     server_addr: n.tunnel_addr,
@@ -285,6 +302,7 @@ impl ClientStreamManager {
                     protocol: n.tunnel_protocol,
                     kcp,
                     proxies: proxy_list,
+                    cert_fingerprints,
                 });
             }
         }

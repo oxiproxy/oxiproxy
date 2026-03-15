@@ -18,6 +18,8 @@ mod grpc_agent_server_service;
 mod grpc_agent_client_service;
 mod grpc_server;
 mod geo_ip;
+mod cert_generator;
+mod certificate_manager;
 
 use crate::migration::{get_connection, init_sqlite};
 use anyhow::Result;

@@ -20,6 +20,7 @@ use crate::local_auth_provider::LocalControllerAuthProvider;
 use crate::node_manager::NodeManager;
 use crate::entity::{Node, Proxy, node, proxy};
 use crate::migration::get_connection;
+use crate::certificate_manager::CertificateManager;
 
 use common::protocol::auth::ClientAuthProvider;
 
@@ -129,7 +130,24 @@ impl AgentServerService for AgentServerServiceImpl {
 
             info!("节点 #{} ({}) 已通过 gRPC 连接认证", node_id, node_name);
 
-            // 发送认证响应（包含权威隧道协议和隧道端口）
+            // 获取或生成节点证书
+            let certificate = match CertificateManager::get_or_generate_node_certificate(node_id, &node_name).await {
+                Ok(cert_data) => {
+                    info!("✅ 节点 #{} 证书已准备（指纹: {}）", node_id, cert_data.fingerprint);
+                    Some(oxiproxy::NodeCertificate {
+                        cert_pem: cert_data.cert_pem,
+                        key_pem: cert_data.key_pem,
+                        fingerprint: cert_data.fingerprint,
+                        expires_at: cert_data.expires_at,
+                    })
+                }
+                Err(e) => {
+                    error!("生成节点 #{} 证书失败: {}", node_id, e);
+                    None
+                }
+            };
+
+            // 发送认证响应（包含权威隧道协议、隧道端口和证书）
             let register_resp = oxiproxy::ControllerToAgentMessage {
                 payload: Some(ControllerPayload::RegisterResponse(oxiproxy::NodeRegisterResponse {
                     node_id,
@@ -137,6 +155,7 @@ impl AgentServerService for AgentServerServiceImpl {
                     tunnel_protocol: authoritative_protocol,
                     speed_limit: node_speed_limit,
                     tunnel_port: node_tunnel_port as u32,
+                    certificate,
                 })),
             };
             if tx.send(Ok(register_resp)).await.is_err() {

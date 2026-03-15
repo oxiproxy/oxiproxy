@@ -6,17 +6,19 @@
 //! - `QuicConnector`: 客户端连接器
 //! - `QuicListener`: 服务端监听器
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use quinn::{
     ClientConfig, Endpoint, ServerConfig, TransportConfig, VarInt,
     crypto::rustls::QuicClientConfig,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
+use sha2::{Sha256, Digest};
 
 use super::traits::{TunnelConnection, TunnelConnector, TunnelListener, TunnelRecvStream, TunnelSendStream};
 
@@ -128,29 +130,73 @@ impl TunnelConnection for QuicConnection {
     }
 }
 
+/// 证书验证模式
+#[derive(Debug, Clone)]
+pub enum CertVerificationMode {
+    /// 跳过验证（仅用于开发环境，不安全）
+    SkipVerification,
+    /// 证书指纹验证（推荐用于自签名证书）
+    Fingerprint(HashSet<String>),
+    /// 使用系统 CA 证书（用于公网 CA 签发的证书）
+    SystemCA,
+}
+
 /// QUIC 客户端连接器
 ///
-/// 用于客户端连接到 QUIC 服务器，支持自签名证书（跳过验证）。
+/// 用于客户端连接到 QUIC 服务器，支持多种证书验证模式。
 pub struct QuicConnector {
     endpoint: Endpoint,
 }
 
 impl QuicConnector {
-    /// 创建新的 QUIC 连接器
+    /// 创建新的 QUIC 连接器（使用指定的证书验证模式）
     ///
-    /// 配置了默认的传输参数和证书验证（跳过验证用于开发环境）。
-    pub fn new() -> Result<Self> {
+    /// # Arguments
+    /// * `verification_mode` - 证书验证模式
+    ///
+    /// # Examples
+    /// ```
+    /// // 使用证书指纹验证（推荐）
+    /// let fingerprints = HashSet::from([
+    ///     "sha256:1234567890abcdef...".to_string()
+    /// ]);
+    /// let connector = QuicConnector::new(CertVerificationMode::Fingerprint(fingerprints))?;
+    ///
+    /// // 使用系统 CA（用于公网证书）
+    /// let connector = QuicConnector::new(CertVerificationMode::SystemCA)?;
+    /// ```
+    pub fn new(verification_mode: CertVerificationMode) -> Result<Self> {
         // 创建传输配置
         let mut transport_config = TransportConfig::default();
         transport_config.max_concurrent_uni_streams(0u32.into());
         transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
         transport_config.max_idle_timeout(Some(Duration::from_secs(60).try_into()?));
 
-        // 创建客户端配置（跳过证书验证）
-        let crypto = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(SkipVerification))
-            .with_no_client_auth();
+        // 根据验证模式创建客户端配置
+        let crypto = match verification_mode {
+            CertVerificationMode::SkipVerification => {
+                tracing::warn!("⚠️  QUIC 证书验证已禁用，仅用于开发环境！");
+                rustls::ClientConfig::builder()
+                    .dangerous()
+                    .with_custom_certificate_verifier(Arc::new(SkipVerification))
+                    .with_no_client_auth()
+            }
+            CertVerificationMode::Fingerprint(fingerprints) => {
+                tracing::info!("🔒 QUIC 使用证书指纹验证（已配置 {} 个指纹）", fingerprints.len());
+                rustls::ClientConfig::builder()
+                    .dangerous()
+                    .with_custom_certificate_verifier(Arc::new(FingerprintVerifier::new(fingerprints)))
+                    .with_no_client_auth()
+            }
+            CertVerificationMode::SystemCA => {
+                tracing::info!("🔒 QUIC 使用系统 CA 证书验证");
+                rustls::ClientConfig::builder()
+                    .with_root_certificates(rustls::RootCertStore::from_iter(
+                        webpki_roots::TLS_SERVER_ROOTS.iter().cloned()
+                    ))
+                    .with_no_client_auth()
+            }
+        };
 
         let mut client_config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
         client_config.transport_config(Arc::new(transport_config));
@@ -160,6 +206,12 @@ impl QuicConnector {
         endpoint.set_default_client_config(client_config);
 
         Ok(Self { endpoint })
+    }
+
+    /// 创建跳过验证的连接器（仅用于开发环境）
+    #[deprecated(note = "不安全，仅用于开发环境。生产环境请使用 new() 并指定验证模式")]
+    pub fn new_insecure() -> Result<Self> {
+        Self::new(CertVerificationMode::SkipVerification)
     }
 }
 
@@ -232,17 +284,101 @@ impl TunnelListener for QuicListener {
     }
 }
 
-/// 自定义证书验证器（跳过验证）
+/// 证书指纹验证器
 ///
-/// 仅用于开发和测试环境，生产环境应使用正确的证书验证。
+/// 验证服务器证书的 SHA-256 指纹是否在允许列表中。
+/// 这种方式适合自签名证书，无需 CA 签发。
+#[derive(Debug)]
+struct FingerprintVerifier {
+    allowed_fingerprints: HashSet<String>,
+}
+
+impl FingerprintVerifier {
+    fn new(fingerprints: HashSet<String>) -> Self {
+        Self {
+            allowed_fingerprints: fingerprints,
+        }
+    }
+
+    /// 计算证书的 SHA-256 指纹
+    fn calculate_fingerprint(cert: &CertificateDer<'_>) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(cert.as_ref());
+        let result = hasher.finalize();
+        format!("sha256:{}", hex::encode(result))
+    }
+}
+
+impl rustls::client::danger::ServerCertVerifier for FingerprintVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        let fingerprint = Self::calculate_fingerprint(end_entity);
+
+        if self.allowed_fingerprints.contains(&fingerprint) {
+            tracing::debug!("✅ 证书指纹验证通过: {}", fingerprint);
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        } else {
+            tracing::error!("❌ 证书指纹验证失败: {}", fingerprint);
+            tracing::error!("允许的指纹: {:?}", self.allowed_fingerprints);
+            Err(rustls::Error::InvalidCertificate(
+                rustls::CertificateError::UnknownIssuer
+            ))
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// 跳过证书验证器（不安全，仅用于开发环境）
+///
+/// ⚠️ 警告：此验证器会接受任何证书，包括伪造的证书。
+/// 仅用于开发和测试环境，生产环境必须使用正确的证书验证。
 #[derive(Debug)]
 struct SkipVerification;
 
 impl rustls::client::danger::ServerCertVerifier for SkipVerification {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
         _server_name: &ServerName<'_>,
         _ocsp_response: &[u8],
         _now: rustls::pki_types::UnixTime,
@@ -253,7 +389,7 @@ impl rustls::client::danger::ServerCertVerifier for SkipVerification {
     fn verify_tls12_signature(
         &self,
         _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _cert: &CertificateDer<'_>,
         _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
         Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
@@ -262,7 +398,7 @@ impl rustls::client::danger::ServerCertVerifier for SkipVerification {
     fn verify_tls13_signature(
         &self,
         _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _cert: &CertificateDer<'_>,
         _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
         Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
@@ -285,4 +421,36 @@ impl rustls::client::danger::ServerCertVerifier for SkipVerification {
             rustls::SignatureScheme::ED448,
         ]
     }
+}
+
+/// 辅助函数：从证书文件计算指纹
+///
+/// # Examples
+/// ```
+/// let fingerprint = calculate_cert_fingerprint_from_file("cert.pem")?;
+/// println!("证书指纹: {}", fingerprint);
+/// ```
+pub fn calculate_cert_fingerprint_from_file(cert_path: &str) -> Result<String> {
+    let cert_pem = std::fs::read(cert_path)?;
+    let cert = rustls_pemfile::certs(&mut cert_pem.as_slice())
+        .next()
+        .ok_or_else(|| anyhow!("证书文件为空"))??;
+
+    let mut hasher = Sha256::new();
+    hasher.update(cert.as_ref());
+    let result = hasher.finalize();
+    Ok(format!("sha256:{}", hex::encode(result)))
+}
+
+/// 辅助函数：从 PEM 内容计算指纹
+pub fn calculate_cert_fingerprint_from_pem(cert_pem: &[u8]) -> Result<String> {
+    let mut pem_reader = cert_pem;
+    let cert = rustls_pemfile::certs(&mut pem_reader)
+        .next()
+        .ok_or_else(|| anyhow!("证书内容为空"))??;
+
+    let mut hasher = Sha256::new();
+    hasher.update(cert.as_ref());
+    let result = hasher.finalize();
+    Ok(format!("sha256:{}", hex::encode(result)))
 }

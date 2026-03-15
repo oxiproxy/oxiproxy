@@ -8,6 +8,7 @@ pub mod system_config;
 pub mod node;
 pub mod subscription;
 pub mod user_subscription;
+pub mod node_certificate;
 
 pub use client::Entity as Client;
 pub use proxy::Entity as Proxy;
@@ -19,3 +20,4 @@ pub use system_config::Entity as SystemConfig;
 pub use node::Entity as Node;
 pub use subscription::Entity as Subscription;
 pub use user_subscription::Entity as UserSubscription;
+pub use node_certificate::Entity as NodeCertificate;
