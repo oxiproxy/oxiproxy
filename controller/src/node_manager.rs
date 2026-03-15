@@ -243,6 +243,34 @@ impl NodeManager {
             _ => Err(anyhow!("收到意外的响应类型")),
         }
     }
+
+    /// 向节点推送证书更新
+    pub async fn push_certificate_update(
+        &self,
+        node_id: i64,
+        certificate: oxiproxy::NodeCertificate,
+    ) -> Result<()> {
+        info!("🔄 向节点 #{} 推送证书更新", node_id);
+
+        let cmd = ControllerPayload::UpdateCertificate(oxiproxy::UpdateCertificateCommand {
+            request_id: String::new(),
+            certificate: Some(certificate),
+        });
+
+        let resp = self.send_command_and_wait(node_id, cmd).await?;
+
+        match resp.result {
+            Some(AgentResult::UpdateCertificate(update_resp)) => {
+                if update_resp.success {
+                    info!("✅ 节点 #{} 证书更新成功", node_id);
+                    Ok(())
+                } else {
+                    Err(anyhow!("证书更新失败: {}", update_resp.error.unwrap_or_default()))
+                }
+            }
+            _ => Err(anyhow!("收到意外的响应类型")),
+        }
+    }
 }
 
 /// 替换 payload 中的 request_id

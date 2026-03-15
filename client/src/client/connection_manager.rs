@@ -20,6 +20,7 @@ use crate::client::log_collector::LogCollector;
 struct ServerConnection {
     node_id: i64,
     proxy_ids: HashSet<i64>,
+    cert_fingerprints: Vec<String>,  // 新增：存储证书指纹
     cancel_token: tokio_util::sync::CancellationToken,
     handle: JoinHandle<()>,
 }
@@ -61,20 +62,32 @@ impl ConnectionManager {
         // 2. 建立新连接或更新已有连接的代理列表
         for group in server_groups {
             let new_proxy_ids: HashSet<i64> = group.proxies.iter().map(|p| p.proxy_id).collect();
+            let new_fingerprints = group.cert_fingerprints.clone();
 
-            let needs_connect = {
+            let needs_reconnect = {
                 let conns = self.connections.read().await;
                 match conns.get(&group.node_id) {
                     Some(conn) => {
-                        // 检查连接 task 是否已终止，如果终止则需要重新连接
+                        // 检查连接 task 是否已终止
                         if conn.handle.is_finished() {
                             warn!(
                                 "节点 #{} 连接 task 已终止，需要重新连接",
                                 group.node_id
                             );
                             true
-                        } else {
-                            // 已有连接且 task 仍在运行，更新代理列表
+                        }
+                        // 检查证书指纹是否变化
+                        else if conn.cert_fingerprints != new_fingerprints {
+                            info!(
+                                "🔄 节点 #{} 证书指纹已更新，触发重连以使用新证书",
+                                group.node_id
+                            );
+                            info!("   旧指纹: {:?}", conn.cert_fingerprints);
+                            info!("   新指纹: {:?}", new_fingerprints);
+                            true
+                        }
+                        else {
+                            // 已有连接且 task 仍在运行，仅更新代理列表
                             if conn.proxy_ids != new_proxy_ids {
                                 debug!(
                                     "节点 #{} 代理数量: {} -> {}",
@@ -90,20 +103,22 @@ impl ConnectionManager {
                 }
             };
 
-            if needs_connect {
-                // 先清理旧的已终止连接（如果存在）
+            if needs_reconnect {
+                // 先清理旧连接（如果存在）
                 {
                     let mut conns = self.connections.write().await;
                     if let Some(old_conn) = conns.remove(&group.node_id) {
+                        info!("🔌 断开节点 #{} 的旧连接", group.node_id);
                         old_conn.cancel_token.cancel();
                     }
                 }
                 self.connect(group, new_proxy_ids).await;
             } else {
-                // 更新代理列表
+                // 仅更新代理列表和指纹（不重连）
                 let mut conns = self.connections.write().await;
                 if let Some(conn) = conns.get_mut(&group.node_id) {
                     conn.proxy_ids = new_proxy_ids;
+                    conn.cert_fingerprints = new_fingerprints;
                 }
             }
         }
@@ -205,6 +220,7 @@ impl ConnectionManager {
         let conn = ServerConnection {
             node_id,
             proxy_ids,
+            cert_fingerprints: group.cert_fingerprints,
             cancel_token,
             handle,
         };
