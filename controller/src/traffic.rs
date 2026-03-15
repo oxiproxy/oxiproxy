@@ -88,6 +88,7 @@ impl TrafficManager {
             }
 
             let mut proxy_active: proxy::ActiveModel = proxy.into();
+            // Safety: proxy_active 由 Model 转换而来，字段为 Unchanged(v)，unwrap 安全
             proxy_active.total_bytes_sent = Set(proxy_active.total_bytes_sent.unwrap() + bytes_sent);
             proxy_active.total_bytes_received = Set(proxy_active.total_bytes_received.unwrap() + bytes_received);
             proxy_active.updated_at = Set(now);
@@ -147,6 +148,7 @@ impl TrafficManager {
                     client_active.last_reset_at = Set(Some(now));
                     info!("🔄 客户端 #{} ({}) 流量已自动重置", client_id, client.name);
                 } else {
+                    // Safety: client_active 由 Model 转换而来，字段为 Unchanged(v)，unwrap 安全
                     client_active.total_bytes_sent = Set(client_active.total_bytes_sent.unwrap() + bytes_sent);
                     client_active.total_bytes_received = Set(client_active.total_bytes_received.unwrap() + bytes_received);
                 }
@@ -192,6 +194,7 @@ impl TrafficManager {
                             user_active.last_reset_at = Set(Some(now));
                             info!("🔄 用户 #{} ({}) 流量已自动重置", uid, user.username);
                         } else {
+                            // Safety: user_active 由 Model 转换而来，字段为 Unchanged(v)，unwrap 安全
                             user_active.total_bytes_sent = Set(user_active.total_bytes_sent.unwrap() + bytes_sent);
                             user_active.total_bytes_received = Set(user_active.total_bytes_received.unwrap() + bytes_received);
                         }
@@ -420,8 +423,10 @@ pub async fn get_traffic_overview(user_id: Option<i64>, days: i64) -> Result<Tra
         let total = client.total_bytes_sent + client.total_bytes_received;
         if !is_admin {
             // 如果不是管理员，只显示有权限的客户端
-            if user_id.is_some() && !has_client_access(db, user_id.unwrap(), client.id).await? {
-                continue;
+            if let Some(uid) = user_id {
+                if !has_client_access(db, uid, client.id).await? {
+                    continue;
+                }
             }
         }
         // 管理员模式下从 client 表统计总流量（避免从 user 表统计导致遗漏无关联用户的流量）
@@ -453,8 +458,10 @@ pub async fn get_traffic_overview(user_id: Option<i64>, days: i64) -> Result<Tra
         let total = proxy.total_bytes_sent + proxy.total_bytes_received;
         if !is_admin {
             // 如果不是管理员，只显示有权限的代理
-            if user_id.is_some() && !has_client_access(db, user_id.unwrap(), proxy_client_id).await? {
-                continue;
+            if let Some(uid) = user_id {
+                if !has_client_access(db, uid, proxy_client_id).await? {
+                    continue;
+                }
             }
         }
 
@@ -487,10 +494,12 @@ pub async fn get_traffic_overview(user_id: Option<i64>, days: i64) -> Result<Tra
 
     let mut daily_map: HashMap<String, (i64, i64)> = HashMap::new();
     for d in all_daily {
-        if !is_admin && user_id.is_some() {
-            // 如果不是管理员，只显示有权限的代理的流量
-            if !has_client_access(db, user_id.unwrap(), d.client_id).await? {
-                continue;
+        if !is_admin {
+            if let Some(uid) = user_id {
+                // 如果不是管理员，只显示有权限的代理的流量
+                if !has_client_access(db, uid, d.client_id).await? {
+                    continue;
+                }
             }
         }
         let entry = daily_map.entry(d.date.clone()).or_insert((0, 0));

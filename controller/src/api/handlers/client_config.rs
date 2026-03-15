@@ -143,5 +143,5 @@ pub async fn get_client_connect_config(
     debug!("客户端 {} (ID: {}) 获取连接配置: 节点 {} ({}:{})",
         config.client_name, config.client_id, node_model.name, config.server_addr, config.server_port);
 
-    (StatusCode::OK, Json(serde_json::to_value(config).unwrap()))
+    (StatusCode::OK, Json(serde_json::to_value(config).expect("failed to serialize config")))
 }

@@ -99,9 +99,9 @@ pub async fn init_sqlite() -> DatabaseConnection {
     let path = path::Path::new("data/oxiproxy.db");
     if !path.exists() {
         if let Some(parent) = path.parent() {
-            create_dir_all(parent).unwrap();
+            create_dir_all(parent).expect("failed to create database directory");
         }
-        fs::write(path, "").unwrap();
+        fs::write(path, "").expect("failed to create database file");
     }
     let db = Database::connect("sqlite://data/oxiproxy.db")
         .await

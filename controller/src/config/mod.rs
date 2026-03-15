@@ -1,6 +1,5 @@
 //! Controller 配置模块
 
-use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -209,12 +208,10 @@ pub async fn init_config() -> Config {
         let path = Path::new(path_str);
         if path.exists() {
             let content = fs::read_to_string(path)
-                .with_context(|| format!("无法读取配置文件: {}", path.display()))
-                .unwrap();
+                .unwrap_or_else(|e| panic!("无法读取配置文件 {}: {}", path.display(), e));
 
             let config: Config = toml::from_str(&content)
-                .with_context(|| "解析配置文件失败")
-                .unwrap();
+                .unwrap_or_else(|e| panic!("解析配置文件 {} 失败: {}", path.display(), e));
 
             tracing::info!("📋 加载配置文件: {}", path.display());
             return config;

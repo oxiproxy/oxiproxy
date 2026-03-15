@@ -57,7 +57,7 @@ pub fn start_grpc_server(
     config_manager: Arc<ConfigManager>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let addr = format!("0.0.0.0:{}", port).parse().unwrap();
+        let addr = format!("0.0.0.0:{}", port).parse().expect("invalid gRPC listen address");
 
         let agent_server_service = AgentServerServiceImpl {
             node_manager,

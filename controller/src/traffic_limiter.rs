@@ -35,11 +35,10 @@ pub fn calculate_client_remaining_quota(client: &client::Model) -> Option<f64> {
 pub fn should_reset_traffic(user: &user::Model) -> bool {
     let now = Utc::now().naive_utc();
 
-    if user.last_reset_at.is_none() {
-        return true; // 从未重置过，需要初始化
-    }
-
-    let last_reset = user.last_reset_at.unwrap();
+    let last_reset = match user.last_reset_at {
+        None => return true, // 从未重置过，需要初始化
+        Some(t) => t,
+    };
 
     match user.traffic_reset_cycle.as_str() {
         "daily" => {
@@ -119,11 +118,10 @@ pub async fn check_user_traffic_limit(user_id: i64, db: &DatabaseConnection) -> 
 pub fn should_reset_client_traffic(client: &client::Model) -> bool {
     let now = Utc::now().naive_utc();
 
-    if client.last_reset_at.is_none() {
-        return true;
-    }
-
-    let last_reset = client.last_reset_at.unwrap();
+    let last_reset = match client.last_reset_at {
+        None => return true,
+        Some(t) => t,
+    };
 
     match client.traffic_reset_cycle.as_str() {
         "daily" => {
@@ -249,11 +247,10 @@ pub async fn check_user_quota_allocation(user_id: i64, additional_quota_gb: f64,
 pub fn should_reset_node_traffic(node: &node::Model) -> bool {
     let now = Utc::now().naive_utc();
 
-    if node.last_reset_at.is_none() {
-        return true;
-    }
-
-    let last_reset = node.last_reset_at.unwrap();
+    let last_reset = match node.last_reset_at {
+        None => return true,
+        Some(t) => t,
+    };
 
     match node.traffic_reset_cycle.as_str() {
         "daily" => now.date() > last_reset.date(),

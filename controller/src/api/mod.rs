@@ -188,7 +188,7 @@ pub fn start_web_server(app_state: AppState) -> tokio::task::JoinHandle<()> {
             if !force_https {
                 info!("HTTP→HTTPS 自动跳转已关闭（适用于反向代理部署）");
             }
-            match axum_server_dual_protocol::bind_dual_protocol(web_addr.parse().unwrap(), tls_config)
+            match axum_server_dual_protocol::bind_dual_protocol(web_addr.parse().expect("invalid web listen address"), tls_config)
                 .set_upgrade(force_https)
                 .serve(app.into_make_service())
                 .await
