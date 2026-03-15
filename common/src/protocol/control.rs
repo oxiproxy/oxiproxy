@@ -76,4 +76,7 @@ pub trait ProxyControl: Send + Sync {
 
     /// 获取服务器状态
     async fn get_server_status(&self) -> Result<ServerStatus>;
+
+    /// 更新证书（热更新）
+    async fn update_certificate(&self, cert_pem: String, key_pem: String) -> Result<()>;
 }

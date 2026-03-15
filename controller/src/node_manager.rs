@@ -425,4 +425,9 @@ impl ProxyControl for NodeManager {
             active_proxy_count: total_proxy_count,
         })
     }
+
+    async fn update_certificate(&self, _cert_pem: String, _key_pem: String) -> Result<()> {
+        // Controller 端不需要实现此方法（仅 Node 端需要）
+        Err(anyhow!("Controller 不支持证书更新操作"))
+    }
 }

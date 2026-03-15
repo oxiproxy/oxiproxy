@@ -66,8 +66,8 @@ struct UdpSession {
 }
 
 pub struct ProxyServer {
-    cert: CertificateDer<'static>,
-    key: PrivateKeyDer<'static>,
+    cert: Arc<RwLock<CertificateDer<'static>>>,
+    key: Arc<RwLock<PrivateKeyDer<'static>>>,
     traffic_manager: Arc<TrafficManager>,
     listener_manager: Arc<ProxyListenerManager>,
     client_connections: Arc<RwLock<HashMap<String, Arc<quinn::Connection>>>>,
@@ -338,8 +338,8 @@ impl ProxyServer {
         let tunnel_connections = Arc::new(RwLock::new(HashMap::new()));
 
         Ok(Self {
-            cert,
-            key,
+            cert: Arc::new(RwLock::new(cert)),
+            key: Arc::new(RwLock::new(key)),
             traffic_manager,
             listener_manager,
             client_connections,
@@ -396,6 +396,36 @@ impl ProxyServer {
         tunnel_online
     }
 
+    /// 更新证书（热更新，无需重启）
+    pub async fn update_certificate(&self, cert_pem: String, key_pem: String) -> Result<()> {
+        info!("🔄 开始更新节点证书...");
+
+        // 解析新证书
+        let cert_der = rustls_pemfile::certs(&mut cert_pem.as_bytes())
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("无法解析证书 PEM"))??;
+        let key_der = rustls_pemfile::private_key(&mut key_pem.as_bytes())?
+            .ok_or_else(|| anyhow::anyhow!("无法解析私钥 PEM"))?;
+
+        let new_cert = CertificateDer::from(cert_der);
+        let new_key = key_der;
+
+        // 更新证书
+        {
+            let mut cert = self.cert.write().await;
+            *cert = new_cert;
+        }
+        {
+            let mut key = self.key.write().await;
+            *key = new_key;
+        }
+
+        info!("✅ 证书已更新，新的 QUIC 连接将使用新证书");
+        info!("⚠️  现有连接将继续使用旧证书，直到重新连接");
+
+        Ok(())
+    }
+
     pub async fn run(&self, bind_addr: String) -> Result<()> {
         // 从配置管理器获取配置
         let idle_timeout = self.config_manager.get_number("idle_timeout", 60).await as u64;
@@ -408,9 +438,13 @@ impl ProxyServer {
         transport_config.keep_alive_interval(Some(Duration::from_secs(keep_alive_interval)));
         transport_config.max_idle_timeout(Some(Duration::from_secs(idle_timeout).try_into()?));
 
+        // 读取当前证书
+        let cert = self.cert.read().await.clone();
+        let key = self.key.read().await.clone_key();
+
         let mut server_config = ServerConfig::with_single_cert(
-            vec![self.cert.clone()],
-            self.key.clone_key(),
+            vec![cert],
+            key,
         )?;
         server_config.transport_config(Arc::new(transport_config));
 

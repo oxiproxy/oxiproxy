@@ -112,6 +112,7 @@ pub async fn run_server_controller_mode(
         proxy_server.get_client_connections(),
         proxy_server.get_tunnel_connections(),
         auth_provider.clone(),
+        proxy_server.clone(),
     ));
 
     // 创建并启动隧道管理器（使用 Controller 下发的权威协议）

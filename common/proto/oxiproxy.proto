@@ -57,6 +57,8 @@ message ControllerToAgentMessage {
     UpdateSpeedLimitCommand update_speed_limit = 16;
     // Controller 主动下发软件更新指令
     SoftwareUpdateCommand software_update = 17;
+    // Controller 主动下发证书更新指令
+    UpdateCertificateCommand update_certificate = 18;
   }
 }
 
@@ -261,6 +263,16 @@ message SoftwareUpdateResponse {
   optional string new_version = 3;
 }
 
+message UpdateCertificateCommand {
+  string request_id = 1;
+  NodeCertificate certificate = 2;  // 新证书
+}
+
+message UpdateCertificateResponse {
+  bool success = 1;
+  optional string error = 2;
+}
+
 // ===== Agent Server 对指令的响应 =====
 
 message AgentServerResponse {
@@ -271,6 +283,7 @@ message AgentServerResponse {
     ClientLogsResponse client_logs = 4;
     NodeLogsResponse node_logs = 5;
     SoftwareUpdateResponse software_update = 6;
+    UpdateCertificateResponse update_certificate = 7;
   }
 }
 

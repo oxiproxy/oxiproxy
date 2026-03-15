@@ -16,7 +16,7 @@ use common::protocol::control::{
 };
 use common::TunnelConnection;
 
-use crate::server::proxy_server::{ConnectionProvider, ProxyListenerManager};
+use crate::server::proxy_server::{ConnectionProvider, ProxyListenerManager, ProxyServer};
 use crate::server::client_logs;
 
 /// 本地代理控制实现
@@ -27,6 +27,7 @@ pub struct LocalProxyControl {
     quic_connections: Arc<RwLock<HashMap<String, Arc<quinn::Connection>>>>,
     tunnel_connections: Arc<RwLock<HashMap<String, Arc<Box<dyn TunnelConnection>>>>>,
     auth_provider: Arc<dyn ClientAuthProvider>,
+    proxy_server: Arc<ProxyServer>,
 }
 
 impl LocalProxyControl {
@@ -35,12 +36,14 @@ impl LocalProxyControl {
         quic_connections: Arc<RwLock<HashMap<String, Arc<quinn::Connection>>>>,
         tunnel_connections: Arc<RwLock<HashMap<String, Arc<Box<dyn TunnelConnection>>>>>,
         auth_provider: Arc<dyn ClientAuthProvider>,
+        proxy_server: Arc<ProxyServer>,
     ) -> Self {
         Self {
             listener_manager,
             quic_connections,
             tunnel_connections,
             auth_provider,
+            proxy_server,
         }
     }
 
@@ -151,5 +154,9 @@ impl ProxyControl for LocalProxyControl {
             connected_clients: clients,
             active_proxy_count,
         })
+    }
+
+    async fn update_certificate(&self, cert_pem: String, key_pem: String) -> Result<()> {
+        self.proxy_server.update_certificate(cert_pem, key_pem).await
     }
 }

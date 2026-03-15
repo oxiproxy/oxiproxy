@@ -457,6 +457,13 @@ impl AgentGrpcClient {
                     }).await;
                 }
 
+                ControllerPayload::UpdateCertificate(cmd) => {
+                    let _ = cmd_tx.send(ControllerCommand::UpdateCertificate {
+                        request_id: cmd.request_id,
+                        certificate: cmd.certificate,
+                    }).await;
+                }
+
                 _ => {
                     warn!("收到未知的 Controller 消息类型");
                 }
@@ -547,6 +554,10 @@ pub enum ControllerCommand {
     },
     SoftwareUpdate {
         request_id: String,
+    },
+    UpdateCertificate {
+        request_id: String,
+        certificate: Option<oxiproxy::NodeCertificate>,
     },
 }
 
@@ -732,6 +743,35 @@ pub async fn handle_controller_commands(
                         tokio::time::sleep(Duration::from_secs(3)).await;
                         restart_self();
                     }
+                }
+
+                ControllerCommand::UpdateCertificate { request_id, certificate } => {
+                    info!("🔄 收到证书更新指令");
+                    let result = if let Some(cert) = certificate {
+                        // 通过 ProxyControl 获取 ProxyServer 并更新证书
+                        match control.update_certificate(cert.cert_pem, cert.key_pem).await {
+                            Ok(()) => {
+                                info!("✅ 证书更新成功");
+                                (true, None)
+                            }
+                            Err(e) => {
+                                error!("❌ 证书更新失败: {}", e);
+                                (false, Some(e.to_string()))
+                            }
+                        }
+                    } else {
+                        error!("❌ 证书更新失败: 未提供证书数据");
+                        (false, Some("未提供证书数据".to_string()))
+                    };
+
+                    let resp = oxiproxy::AgentServerResponse {
+                        request_id,
+                        result: Some(AgentResult::UpdateCertificate(oxiproxy::UpdateCertificateResponse {
+                            success: result.0,
+                            error: result.1,
+                        })),
+                    };
+                    let _ = grpc.send_response(resp).await;
                 }
             }
         });
