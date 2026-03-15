@@ -4,27 +4,29 @@ version = "0.0.0-dev"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-quinn = { version = "0.11", features = ["rustls", "ring"] }
-rustls = { version = "0.23", features = ["std"] }
-rustls-pemfile = "2.0"
-webpki-roots = "0.26"
-anyhow = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-async-trait = "0.1"
-tokio_kcp = "0.9.8"
-tracing = "0.1"
-yamux = "0.13"
-tokio-util = { version = "0.7", features = ["compat"] }
-futures = "0.3"
-socket2 = { version = "0.6.2", features = ["all"] }
+tokio = { workspace = true }
+quinn = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+webpki-roots = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tokio_kcp = { workspace = true }
+tracing = { workspace = true }
+yamux = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+socket2 = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Networking_WinSock", "Win32_Foundation"] }
-tonic = "0.12"
-prost = "0.13"
-uuid = { version = "1.0", features = ["v4"] }
-sha2 = "0.10"
-hex = "0.4"
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-build = { workspace = true }

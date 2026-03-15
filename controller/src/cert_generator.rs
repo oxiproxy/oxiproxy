@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType};
+use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair};
 use time::OffsetDateTime;
 
 /// 生成自签名证书
@@ -15,7 +15,7 @@ pub fn generate_self_signed_certificate(
     validity_days: u32,
 ) -> Result<(String, String, String)> {
     // 创建证书参数
-    let mut params = CertificateParams::new(vec![common_name.to_string()]);
+    let mut params = CertificateParams::new(vec![common_name.to_string()])?;
 
     // 设置 Distinguished Name
     let mut dn = DistinguishedName::new();
@@ -28,10 +28,11 @@ pub fn generate_self_signed_certificate(
     params.not_before = not_before;
     params.not_after = not_after;
 
-    // 生成证书
-    let cert = Certificate::from_params(params)?;
-    let cert_pem = cert.serialize_pem()?;
-    let key_pem = cert.serialize_private_key_pem();
+    // 生成密钥对和自签名证书
+    let key_pair = KeyPair::generate()?;
+    let cert = params.self_signed(&key_pair)?;
+    let cert_pem = cert.pem();
+    let key_pem = key_pair.serialize_pem();
 
     // 计算指纹
     let fingerprint = common::tunnel::calculate_cert_fingerprint_from_pem(
