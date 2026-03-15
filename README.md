@@ -19,11 +19,12 @@
 | 特性 | 说明 |
 |------|------|
 | **高性能** | 基于 Rust + QUIC/KCP/TCP 协议，低延迟、高并发 |
-| **安全可靠** | TLS 加密传输，Token/JWT 认证机制 |
+| **安全可靠** | 自动化证书管理 + TLS 加密传输 + Token/JWT 认证 |
 | **三层架构** | Controller + Node + Client 灵活部署 |
 | **跨平台** | 支持 Linux、Windows、macOS (amd64/arm64) |
 | **易于使用** | 一键安装脚本 + Web 可视化管理界面 |
 | **多协议** | 支持 QUIC（默认）、KCP、TCP 三种隧道协议，适配不同网络环境 |
+| **证书管理** | 自动生成、分发、验证证书，零配置安全连接 |
 | **自动重连** | 客户端/节点断线自动重连，服务稳定 |
 | **自动更新** | 支持远程自动更新所有组件，运维便捷 |
 | **流量管控** | 实时流量统计，支持用户配额管理 |
@@ -560,6 +561,8 @@ Controller 提供 RESTful API，前缀为 `/api`：
 **后端：**
 - [Rust](https://www.rust-lang.org/) 2021 Edition - 系统编程语言
 - [quinn](https://github.com/quinn-rs/quinn) - QUIC 协议实现
+- [rcgen](https://github.com/rustls/rcgen) - 自签名证书生成
+- [rustls](https://github.com/rustls/rustls) - TLS 实现（证书指纹验证）
 - [tokio-kcp](https://github.com/Matrix-Zhang/tokio_kcp) + [yamux](https://github.com/libp2p/rust-yamux) - KCP/TCP 协议 + 多路复用
 - [tokio](https://tokio.rs/) - 异步运行时
 - [tonic](https://github.com/hyperium/tonic) - gRPC 框架
@@ -575,6 +578,9 @@ Controller 提供 RESTful API，前缀为 `/api`：
 
 ## 安全性
 
+- **自动化证书管理**：Controller 自动为每个 Node 生成唯一证书，通过 gRPC 自动分发
+- **证书指纹验证**：Client 使用 SHA-256 指纹验证 Node 证书，防止中间人攻击
+- **证书自动续期**：证书有效期 10 年，提前 30 天自动更新，零配置管理
 - **TLS 加密**：QUIC 协议内置 TLS 加密，隧道通信安全
 - **多路复用**：KCP 和 TCP 隧道使用 yamux 多路复用，TCP 隧道适用于 UDP 受限网络
 - **Token 认证**：Node 和 Client 使用 Token 进行身份验证

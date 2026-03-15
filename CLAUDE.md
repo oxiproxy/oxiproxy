@@ -74,6 +74,40 @@ Controller 配置按以下优先级加载：
 
 Node 和 Client 都使用自定义 tracing layer 实现内存日志缓冲（默认 1000 行循环缓冲）。日志不持久化到磁盘，通过 gRPC 和 HTTP API 可查询。
 
+### 证书管理系统
+
+OxiProxy 实现了完全自动化的证书管理系统，用于保护 QUIC 隧道连接：
+
+**架构设计**
+- **中心化管理**：Controller 作为证书颁发机构（CA），为每个 Node 生成唯一的自签名证书
+- **自动分发**：证书通过 gRPC 自动下发给 Node，指纹通过 gRPC 自动下发给 Client
+- **指纹验证**：Client 使用 SHA-256 指纹验证 Node 证书，防止中间人攻击
+- **自动续期**：证书有效期 10 年，提前 30 天自动更新
+
+**核心组件**
+- `controller/src/certificate_manager.rs` - 证书生成、存储、查询
+- `controller/src/cert_generator.rs` - 自签名证书生成器（rcgen）
+- `controller/src/entity/node_certificate.rs` - 证书数据库实体
+- `common/src/tunnel/quic.rs` - QUIC 证书验证器（FingerprintVerifier）
+
+**证书分发流程**
+1. Node 注册时，Controller 自动生成证书并保存到数据库（base64 编码）
+2. Controller 通过 gRPC `NodeRegisterResponse.certificate` 下发证书给 Node
+3. Node 使用证书启动 QUIC 监听器
+4. Client 连接时，Controller 通过 `ProxyListUpdate.cert_fingerprints` 下发指纹
+5. Client 使用指纹验证 Node 证书，验证通过后建立 QUIC 连接
+
+**数据库表**
+- `node_certificates` 表存储证书（cert_content, key_content, fingerprint, expires_at）
+- 唯一索引：`node_id`（每个节点一个证书）
+- 外键级联删除：节点删除时自动清理证书
+
+**安全特性**
+- 证书指纹使用 SHA-256 算法计算
+- 支持证书轮换（提前 30 天自动续期）
+- 回退机制：Node 无证书时生成临时证书（开发模式）
+- 验证失败时拒绝连接并记录日志
+
 ## 常用命令
 
 ### 后端开发
@@ -148,7 +182,9 @@ bun run lint
 - `api/handlers/` - RESTful API handlers（auth, user, client, proxy, node, traffic, dashboard, subscription, system_config）
 - `middleware/auth.rs` - JWT 认证中间件，提取 `AuthUser { id, username, is_admin }`
 - `entity/` - SeaORM 数据库实体
-- `migration/` - 数据库迁移（37 个迁移文件）
+- `migration/` - 数据库迁移（38 个迁移文件，包括证书表）
+- `certificate_manager.rs` - 证书生成、存储、查询、续期管理
+- `cert_generator.rs` - 自签名证书生成器（rcgen + SHA-256 指纹）
 - `traffic.rs` - 流量记录和统计
 - `traffic_limiter.rs` - 流量配额验证逻辑
 - `port_limiter.rs` - 用户端口范围限制
@@ -174,8 +210,8 @@ bun run lint
 
 - `main.rs` - 启动入口，CLI 子命令：`start`、`daemon`、`stop`、`update`。Windows 额外支持 `install-service` / `uninstall-service`
 - `client/` - 客户端实现
-  - `grpc_client.rs` - 连接到 Controller，接收 ProxyListUpdate
-  - `connection_manager.rs` - 隧道连接协调（desired vs actual 状态协调）
+  - `grpc_client.rs` - 连接到 Controller，接收 ProxyListUpdate（含证书指纹）
+  - `connection_manager.rs` - 隧道连接协调（desired vs actual 状态协调，证书指纹验证）
   - `log_collector.rs` - 内存日志收集（自定义 tracing layer）
 - `windows_service.rs` - Windows Service 注册/管理（服务名: OxiProxyClient）
 
@@ -185,7 +221,7 @@ bun run lint
 - `build.rs` - tonic-build 自动编译 proto 文件（`cargo build` 时自动触发）
 - `tunnel/` - 隧道协议抽象层
   - `traits.rs` - 统一的 TunnelSendStream/RecvStream/Connection/Connector/Listener trait
-  - `quic.rs` - QUIC 实现（quinn + rcgen 自签名证书）
+  - `quic.rs` - QUIC 实现（quinn + 证书指纹验证器 FingerprintVerifier）
   - `kcp.rs` - KCP 实现（tokio_kcp + yamux 多路复用）
 - `grpc/pending_requests.rs` - request_id 请求-响应匹配工具（含 60 秒过期自动清理）
 - `protocol/` - 共享 trait 定义（ProxyControl, ClientAuthProvider, traffic 等）
