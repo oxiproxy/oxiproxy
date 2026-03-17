@@ -42,6 +42,7 @@ mod m20260302_000001_add_version_fields;
 mod m20260313_000001_add_default_quota_config;
 mod m20260315_000001_add_node_certificates;
 mod m20260317_000001_add_client_last_online_at;
+mod m20260317_000002_add_node_last_online_at;
 
 pub struct Migrator;
 
@@ -87,6 +88,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260313_000001_add_default_quota_config::Migration),
             Box::new(m20260315_000001_add_node_certificates::Migration),
             Box::new(m20260317_000001_add_client_last_online_at::Migration),
+            Box::new(m20260317_000002_add_node_last_online_at::Migration),
         ]
     }
 }

@@ -577,6 +577,9 @@ fn start_node_health_monitor(node_manager: Arc<node_manager::NodeManager>) {
 
                     let mut active: entity::node::ActiveModel = node.into();
                     active.is_online = Set(is_online);
+                    if is_online {
+                        active.last_online_at = Set(Some(Utc::now().naive_utc()));
+                    }
                     active.updated_at = Set(Utc::now().naive_utc());
                     let _ = active.update(db).await;
                 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { nodeService, systemService } from '../lib/services';
 import type { Node, User } from '../lib/types';
-import { formatDate } from '../lib/utils';
+import { formatDate, formatRelativeTime } from '../lib/utils';
 import { useToast } from '../contexts/ToastContext';
 import { getStoredJson } from '../lib/api';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -632,6 +632,11 @@ export default function Nodes() {
                         <span className="w-1.5 h-1.5 rounded-full" style={{ background: node.isOnline ? 'hsl(142 71% 45%)' : 'hsl(0 84.2% 60.2%)' }}></span>
                         {node.isOnline ? '在线' : '离线'}
                       </span>
+                      {!node.isOnline && node.lastOnlineAt && (
+                        <span className="text-xs text-muted-foreground mt-0.5" title={formatDate(node.lastOnlineAt)}>
+                          {formatRelativeTime(node.lastOnlineAt)}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
                       <div className="flex items-center gap-1.5">

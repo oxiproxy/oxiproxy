@@ -201,6 +201,7 @@ export interface Node {
   isTrafficExceeded: boolean;
   speedLimit: number | null;
   version: string | null;
+  lastOnlineAt: string | null;
   created_at: string;
   updated_at: string;
 }

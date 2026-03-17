@@ -44,6 +44,8 @@ pub struct Model {
     #[serde(rename = "speedLimit")]
     pub speed_limit: Option<i64>,
     pub version: Option<String>,
+    #[serde(rename = "lastOnlineAt")]
+    pub last_online_at: Option<DateTime>,
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }

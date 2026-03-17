@@ -166,6 +166,7 @@ pub async fn create_node(
         is_traffic_exceeded: Set(false),
         speed_limit: Set(req.speed_limit),
         version: Set(None),
+        last_online_at: NotSet,
         created_at: Set(now),
         updated_at: Set(now),
     };
