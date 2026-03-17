@@ -384,7 +384,6 @@ fn perform_client_self_update() -> anyhow::Result<String> {
         .repo_name("oxiproxy")
         .bin_name("client")
         .identifier("client")
-        .bin_path_in_archive("{bin}{bin_ext}")
         .show_download_progress(false)
         .current_version(env!("CARGO_PKG_VERSION"))
         .no_confirm(true)
