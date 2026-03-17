@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { clientService, userService, systemService } from '../lib/services';
 import type { Client, LogEntry, User } from '../lib/types';
-import { formatBytes, formatDate, copyToClipboard } from '../lib/utils';
+import { formatBytes, formatDate, formatRelativeTime, copyToClipboard } from '../lib/utils';
 import { useToast } from '../contexts/ToastContext';
 import { getStoredJson } from '../lib/api';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -453,6 +453,11 @@ export default function Clients() {
                         <span className={`text-sm font-medium`} style={{ color: client.is_online ? 'hsl(142 71% 45%)' : 'hsl(0 84.2% 60.2%)' }}>
                           {client.is_online ? '在线' : '离线'}
                         </span>
+                        {!client.is_online && client.lastOnlineAt && (
+                          <span className="text-xs text-muted-foreground" title={formatDate(client.lastOnlineAt)}>
+                            {formatRelativeTime(client.lastOnlineAt)}
+                          </span>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap">

@@ -52,6 +52,7 @@ export interface Client {
   region: string | null;
   userId: number | null;
   version: string | null;
+  lastOnlineAt: string | null;
   totalBytesSent: number;
   totalBytesReceived: number;
   trafficQuotaGb: number | null;

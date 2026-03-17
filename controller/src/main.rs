@@ -609,6 +609,9 @@ fn start_client_health_monitor(client_stream_manager: Arc<client_stream_manager:
 
                     let mut active: entity::client::ActiveModel = client.into();
                     active.is_online = Set(is_online);
+                    if is_online {
+                        active.last_online_at = Set(Some(Utc::now().naive_utc()));
+                    }
                     active.updated_at = Set(Utc::now().naive_utc());
                     let _ = active.update(db).await;
                 }

@@ -126,6 +126,7 @@ pub async fn create_client(
         traffic_reset_cycle: Set(req.traffic_reset_cycle.unwrap_or_else(|| "none".to_string())),
         last_reset_at: Set(None),
         is_traffic_exceeded: Set(false),
+        last_online_at: NotSet,
         created_at: Set(now),
         updated_at: Set(now),
     };
