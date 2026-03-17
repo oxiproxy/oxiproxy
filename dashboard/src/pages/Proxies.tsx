@@ -50,6 +50,7 @@ export default function Proxies() {
   const [portParseError, setPortParseError] = useState<string>('');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editingGroupPorts, setEditingGroupPorts] = useState<{ id: number; remotePort: string; localPort: string }[]>([]);
   useEffect(() => {
     loadData();
   }, []);
@@ -563,38 +564,52 @@ export default function Proxies() {
   const handleEditGroup = (group: ProxyGroup) => {
     setEditingGroupId(group.groupId);
     setEditingProxy(null);
-    const firstProxy = group.proxies[0];
     setFormData({
       client_id: group.client_id,
       node_id: group.nodeId ? group.nodeId.toString() : '',
       name: group.name,
       type: group.type,
       localIP: group.localIP,
-      localPort: firstProxy.localPort.toString(),
+      localPort: '',
       remotePort: '',
       enabled: group.enabled,
     });
+    setEditingGroupPorts(
+      group.proxies
+        .sort((a, b) => a.remotePort - b.remotePort)
+        .map(p => ({ id: p.id, remotePort: p.remotePort.toString(), localPort: p.localPort.toString() }))
+    );
     setShowCreateModal(true);
   };
 
   const handleUpdateGroup = async () => {
     if (!editingGroupId) return;
     try {
+      // 更新组共享属性
       const response = await proxyService.updateProxyGroup(editingGroupId, {
         name: formData.name || undefined,
         type: formData.type || undefined,
         localIP: formData.localIP || undefined,
-        localPort: formData.localPort ? parseInt(formData.localPort) : undefined,
       });
-      if (response.success) {
-        showToast('代理组更新成功', 'success');
-        resetForm();
-        setEditingGroupId(null);
-        setShowCreateModal(false);
-        loadData();
-      } else {
+      if (!response.success) {
         showToast(response.message || '更新失败', 'error');
+        return;
       }
+
+      // 逐个更新每个子代理的端口
+      for (const item of editingGroupPorts) {
+        const remotePort = parseInt(item.remotePort);
+        const localPort = parseInt(item.localPort);
+        if (isNaN(remotePort) || isNaN(localPort)) continue;
+        await proxyService.updateProxy(item.id, { remotePort, localPort });
+      }
+
+      showToast('代理组更新成功', 'success');
+      resetForm();
+      setEditingGroupId(null);
+      setEditingGroupPorts([]);
+      setShowCreateModal(false);
+      loadData();
     } catch (error) {
       showToast('更新失败', 'error');
     }
@@ -1280,17 +1295,43 @@ export default function Proxies() {
                 </div>
                 {editingGroupId ? (
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">客户端本地端口</label>
-                  <input
-                    type="text"
-                    value={formData.localPort}
-                    onChange={(e) => setFormData({ ...formData, localPort: e.target.value })}
-                    placeholder="如: 80"
-                    className="w-full px-4 py-3 border border-border rounded-xl text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-muted/50 hover:bg-card"
-                  />
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    修改后所有子代理的本地端口将统一更新
-                  </p>
+                  <label className="block text-sm font-medium text-foreground mb-1.5">端口映射 ({editingGroupPorts.length} 个)</label>
+                  <div className="border border-border rounded-xl overflow-hidden">
+                    <div className="grid grid-cols-[1fr_auto_1fr] gap-0 px-3 py-2 bg-muted/50 text-xs font-medium text-muted-foreground border-b border-border">
+                      <span>节点端口</span>
+                      <span className="px-3"></span>
+                      <span>本地端口</span>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto divide-y divide-border">
+                      {editingGroupPorts.map((item, idx) => (
+                        <div key={item.id} className="grid grid-cols-[1fr_auto_1fr] gap-0 items-center px-3 py-1.5">
+                          <input
+                            type="number"
+                            value={item.remotePort}
+                            onChange={(e) => {
+                              const next = [...editingGroupPorts];
+                              next[idx] = { ...next[idx], remotePort: e.target.value };
+                              setEditingGroupPorts(next);
+                            }}
+                            className="w-full px-2 py-1.5 border border-border rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary bg-muted/50"
+                          />
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 mx-2 text-muted-foreground flex-shrink-0">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                          </svg>
+                          <input
+                            type="number"
+                            value={item.localPort}
+                            onChange={(e) => {
+                              const next = [...editingGroupPorts];
+                              next[idx] = { ...next[idx], localPort: e.target.value };
+                              setEditingGroupPorts(next);
+                            }}
+                            className="w-full px-2 py-1.5 border border-border rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary bg-muted/50"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
                 ) : (
                 <div className="grid grid-cols-2 gap-4">
