@@ -165,6 +165,11 @@ export const clientService = {
     return response.data;
   },
 
+  async triggerRestart(id: number): Promise<ApiResponse<{ message: string }>> {
+    const response = await api.post<ApiResponse<any>>(`/clients/${id}/restart`);
+    return response.data;
+  },
+
   async batchUpdate(): Promise<ApiResponse<{ results: BatchUpdateResult[] }>> {
     const response = await api.post<ApiResponse<any>>('/clients/batch-update');
     return response.data;
@@ -391,6 +396,11 @@ export const nodeService = {
 
   async triggerUpdate(id: number): Promise<ApiResponse<{ success: boolean; error?: string; newVersion?: string }>> {
     const response = await api.post<ApiResponse<any>>(`/nodes/${id}/update`);
+    return response.data;
+  },
+
+  async triggerRestart(id: number): Promise<ApiResponse<{ message: string }>> {
+    const response = await api.post<ApiResponse<any>>(`/nodes/${id}/restart`);
     return response.data;
   },
 

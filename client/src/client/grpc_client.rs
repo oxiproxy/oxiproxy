@@ -228,6 +228,26 @@ async fn message_loop(
                 }
             }
 
+            ControllerPayload::Restart(cmd) => {
+                info!("收到远程重启指令");
+                let resp_msg = oxiproxy::AgentClientMessage {
+                    payload: Some(ClientPayload::Response(oxiproxy::AgentClientResponse {
+                        request_id: cmd.request_id,
+                        result: Some(oxiproxy::agent_client_response::Result::SoftwareUpdate(
+                            oxiproxy::SoftwareUpdateResponse {
+                                success: true,
+                                error: None,
+                                new_version: None,
+                            },
+                        )),
+                    })),
+                };
+                let _ = response_tx.send(resp_msg).await;
+                info!("2秒后重启...");
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                restart_self();
+            }
+
             _ => {
                 warn!("收到未知的 Controller 消息类型");
             }

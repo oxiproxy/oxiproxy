@@ -127,6 +127,7 @@ pub fn start_web_server(app_state: AppState) -> tokio::task::JoinHandle<()> {
             .route("/clients/{id}/traffic", get(handlers::get_client_traffic))
             .route("/clients/{id}/allocate-quota", post(handlers::allocate_client_quota))
             .route("/clients/{id}/update", post(handlers::trigger_client_update))
+            .route("/clients/{id}/restart", post(handlers::trigger_client_restart))
             .route("/proxies", get(handlers::list_proxies).post(handlers::create_proxy))
             .route("/proxies/batch", post(handlers::batch_create_proxies))
             .route("/proxies/group/{group_id}", put(handlers::update_proxy_group).delete(handlers::delete_proxy_group))
@@ -157,6 +158,7 @@ pub fn start_web_server(app_state: AppState) -> tokio::task::JoinHandle<()> {
             .route("/nodes/{id}/status", get(handlers::get_node_status))
             .route("/nodes/{id}/logs", get(handlers::get_node_logs))
             .route("/nodes/{id}/update", post(handlers::trigger_node_update))
+            .route("/nodes/{id}/restart", post(handlers::trigger_node_restart))
             // 订阅管理路由
             .route("/subscriptions", get(handlers::list_subscriptions).post(handlers::create_subscription))
             .route("/subscriptions/active", get(handlers::list_active_subscriptions))

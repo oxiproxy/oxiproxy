@@ -244,6 +244,26 @@ impl NodeManager {
         }
     }
 
+    /// 向节点发送重启指令
+    pub async fn send_restart(&self, node_id: i64) -> Result<()> {
+        let cmd = ControllerPayload::Restart(oxiproxy::RestartCommand {
+            request_id: String::new(),
+        });
+
+        let resp = self.send_command_and_wait(node_id, cmd).await?;
+
+        match resp.result {
+            Some(AgentResult::CommandAck(ack)) => {
+                if ack.success {
+                    Ok(())
+                } else {
+                    Err(anyhow!("重启失败: {}", ack.error.unwrap_or_default()))
+                }
+            }
+            _ => Err(anyhow!("收到意外的响应类型")),
+        }
+    }
+
     /// 向节点推送证书更新
     pub async fn push_certificate_update(
         &self,
@@ -307,6 +327,10 @@ fn replace_request_id(payload: ControllerPayload, request_id: &str) -> Controlle
         ControllerPayload::SoftwareUpdate(mut cmd) => {
             cmd.request_id = request_id.to_string();
             ControllerPayload::SoftwareUpdate(cmd)
+        }
+        ControllerPayload::Restart(mut cmd) => {
+            cmd.request_id = request_id.to_string();
+            ControllerPayload::Restart(cmd)
         }
         other => other,
     }

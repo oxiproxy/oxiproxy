@@ -174,6 +174,63 @@ pub async fn trigger_client_update(
     }
 }
 
+/// POST /api/nodes/{id}/restart
+pub async fn trigger_node_restart(
+    Path(id): Path<i64>,
+    Extension(auth_user): Extension<Option<AuthUser>>,
+    Extension(app_state): Extension<AppState>,
+) -> impl IntoResponse {
+    let auth_user = match auth_user {
+        Some(user) => user,
+        None => return (StatusCode::UNAUTHORIZED, ApiResponse::<serde_json::Value>::error("未认证".to_string())),
+    };
+
+    if !auth_user.is_admin {
+        return (StatusCode::FORBIDDEN, ApiResponse::<serde_json::Value>::error("仅管理员".to_string()));
+    }
+
+    let connected_ids = app_state.node_manager.get_loaded_node_ids().await;
+    if !connected_ids.contains(&id) {
+        return (StatusCode::BAD_REQUEST, ApiResponse::<serde_json::Value>::error("节点不在线".to_string()));
+    }
+
+    match app_state.node_manager.send_restart(id).await {
+        Ok(()) => {
+            (StatusCode::OK, ApiResponse::success(serde_json::json!({ "message": "重启指令已发送" })))
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiResponse::<serde_json::Value>::error(format!("重启失败: {}", e)),
+        ),
+    }
+}
+
+/// POST /api/clients/{id}/restart
+pub async fn trigger_client_restart(
+    Path(id): Path<i64>,
+    Extension(auth_user): Extension<Option<AuthUser>>,
+    Extension(app_state): Extension<AppState>,
+) -> impl IntoResponse {
+    let auth_user = match auth_user {
+        Some(user) => user,
+        None => return (StatusCode::UNAUTHORIZED, ApiResponse::<serde_json::Value>::error("未认证".to_string())),
+    };
+
+    if !auth_user.is_admin {
+        return (StatusCode::FORBIDDEN, ApiResponse::<serde_json::Value>::error("仅管理员".to_string()));
+    }
+
+    match app_state.client_stream_manager.send_restart(id).await {
+        Ok(()) => {
+            (StatusCode::OK, ApiResponse::success(serde_json::json!({ "message": "重启指令已发送" })))
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiResponse::<serde_json::Value>::error(format!("重启失败: {}", e)),
+        ),
+    }
+}
+
 /// POST /api/nodes/batch-update
 pub async fn batch_update_nodes(
     Extension(auth_user): Extension<Option<AuthUser>>,

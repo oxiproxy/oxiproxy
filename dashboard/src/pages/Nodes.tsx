@@ -54,6 +54,7 @@ export default function Nodes() {
   const [testingId, setTestingId] = useState<number | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [updatingNodeId, setUpdatingNodeId] = useState<number | null>(null);
+  const [restartingNodeId, setRestartingNodeId] = useState<number | null>(null);
   const [batchUpdating, setBatchUpdating] = useState(false);
 
   useEffect(() => {
@@ -227,6 +228,32 @@ export default function Nodes() {
     } finally {
       setUpdatingNodeId(null);
     }
+  };
+
+  const handleNodeRestart = (nodeId: number) => {
+    setConfirmDialog({
+      open: true,
+      title: '重启节点',
+      message: '确定要重启该节点吗？重启期间节点将暂时不可用。',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, open: false }));
+        setRestartingNodeId(nodeId);
+        try {
+          const response = await nodeService.triggerRestart(nodeId);
+          if (response.success) {
+            showToast('重启指令已发送，节点正在重启...', 'success');
+            setTimeout(() => loadNodes(), 5000);
+          } else {
+            showToast(response.message || '重启失败', 'error');
+          }
+        } catch (err: any) {
+          const msg = err?.response?.data?.message || '请求失败';
+          showToast(msg, 'error');
+        } finally {
+          setRestartingNodeId(null);
+        }
+      },
+    });
   };
 
   const handleBatchUpdate = () => {
@@ -680,6 +707,31 @@ export default function Nodes() {
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
                                 </svg>
                                 {node.version !== latestVersion && latestVersion ? '更新' : '重装'}
+                              </>
+                            )}
+                          </button>
+                        )}
+                        {isAdmin && node.isOnline && (
+                          <button
+                            onClick={() => handleNodeRestart(node.id)}
+                            disabled={restartingNodeId === node.id}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="重启节点"
+                          >
+                            {restartingNodeId === node.id ? (
+                              <>
+                                <svg className="animate-spin w-3 h-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                重启中...
+                              </>
+                            ) : (
+                              <>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M2.985 19.644l3.181-3.183" />
+                                </svg>
+                                重启
                               </>
                             )}
                           </button>

@@ -216,6 +216,42 @@ impl ClientStreamManager {
         }
     }
 
+    /// 向客户端发送重启指令
+    pub async fn send_restart(&self, client_id: i64) -> anyhow::Result<()> {
+        let (request_id, rx, tx_clone) = {
+            let streams = self.streams.read().await;
+            let stream = streams.get(&client_id)
+                .ok_or_else(|| anyhow::anyhow!("客户端 #{} 未连接", client_id))?;
+
+            let (request_id, rx) = stream.pending.register().await;
+            (request_id, rx, stream.tx.clone())
+        };
+
+        let msg = oxiproxy::ControllerToClientMessage {
+            payload: Some(oxiproxy::controller_to_client_message::Payload::Restart(
+                oxiproxy::RestartCommand {
+                    request_id: request_id.clone(),
+                },
+            )),
+        };
+
+        tx_clone.send(Ok(msg)).await
+            .map_err(|_| anyhow::anyhow!("发送重启请求到客户端 #{} 失败", client_id))?;
+
+        let resp = PendingRequests::wait(rx, Duration::from_secs(10)).await?;
+
+        match resp.result {
+            Some(oxiproxy::agent_client_response::Result::SoftwareUpdate(update_resp)) => {
+                if update_resp.success {
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!("重启失败: {}", update_resp.error.unwrap_or_default()))
+                }
+            }
+            _ => Err(anyhow::anyhow!("收到意外的响应类型")),
+        }
+    }
+
     /// 构建代理列表更新消息
     pub async fn build_proxy_list_update(&self, client_id: i64) -> anyhow::Result<oxiproxy::ProxyListUpdate> {
         let db = get_connection().await;

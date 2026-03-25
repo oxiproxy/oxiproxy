@@ -464,6 +464,12 @@ impl AgentGrpcClient {
                     }).await;
                 }
 
+                ControllerPayload::Restart(cmd) => {
+                    let _ = cmd_tx.send(ControllerCommand::Restart {
+                        request_id: cmd.request_id,
+                    }).await;
+                }
+
                 _ => {
                     warn!("收到未知的 Controller 消息类型");
                 }
@@ -558,6 +564,9 @@ pub enum ControllerCommand {
     UpdateCertificate {
         request_id: String,
         certificate: Option<oxiproxy::NodeCertificate>,
+    },
+    Restart {
+        request_id: String,
     },
 }
 
@@ -772,6 +781,21 @@ pub async fn handle_controller_commands(
                         })),
                     };
                     let _ = grpc.send_response(resp).await;
+                }
+
+                ControllerCommand::Restart { request_id } => {
+                    info!("收到远程重启指令");
+                    let resp = oxiproxy::AgentServerResponse {
+                        request_id,
+                        result: Some(AgentResult::CommandAck(oxiproxy::CommandAck {
+                            success: true,
+                            error: None,
+                        })),
+                    };
+                    let _ = grpc.send_response(resp).await;
+                    info!("2秒后重启...");
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    restart_self();
                 }
             }
         });

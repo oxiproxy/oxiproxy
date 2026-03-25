@@ -59,6 +59,8 @@ message ControllerToAgentMessage {
     SoftwareUpdateCommand software_update = 17;
     // Controller 主动下发证书更新指令
     UpdateCertificateCommand update_certificate = 18;
+    // Controller 主动下发重启指令
+    RestartCommand restart = 19;
   }
 }
 
@@ -88,6 +90,7 @@ message ControllerToClientMessage {
     // Controller 主动下发的指令
     GetClientLogsDirectCommand get_logs = 10;
     SoftwareUpdateCommand software_update = 11;
+    RestartCommand restart = 12;
   }
 }
 
@@ -266,6 +269,11 @@ message SoftwareUpdateResponse {
 message UpdateCertificateCommand {
   string request_id = 1;
   NodeCertificate certificate = 2;  // 新证书
+}
+
+// Controller 主动下发重启指令
+message RestartCommand {
+  string request_id = 1;
 }
 
 message UpdateCertificateResponse {
