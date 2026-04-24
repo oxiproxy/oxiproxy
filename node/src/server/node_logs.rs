@@ -3,7 +3,8 @@
 //! 提供内存中的日志缓冲区，用于跨平台日志查询。
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tracing::{Level, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 use common::protocol::control::LogEntry;
@@ -26,7 +27,8 @@ impl NodeLogBuffer {
 
     /// 添加日志条目
     pub fn push(&self, entry: LogEntry) {
-        let mut buffer = self.inner.lock().unwrap();
+        // parking_lot::Mutex 不会中毒，无需 .unwrap()
+        let mut buffer = self.inner.lock();
         if buffer.len() >= self.max_size {
             buffer.pop_front();
         }
@@ -35,14 +37,14 @@ impl NodeLogBuffer {
 
     /// 获取最后 N 条日志
     pub fn get_last(&self, count: usize) -> Vec<LogEntry> {
-        let buffer = self.inner.lock().unwrap();
+        let buffer = self.inner.lock();
         let start = buffer.len().saturating_sub(count);
         buffer.iter().skip(start).cloned().collect()
     }
 
     /// 获取所有日志
     pub fn get_all(&self) -> Vec<LogEntry> {
-        let buffer = self.inner.lock().unwrap();
+        let buffer = self.inner.lock();
         buffer.iter().cloned().collect()
     }
 }

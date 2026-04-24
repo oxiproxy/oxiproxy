@@ -22,6 +22,7 @@ tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
 chrono = { workspace = true }
 async-trait = { workspace = true }
+parking_lot = { workspace = true }
 
 # CLI
 clap = { workspace = true }

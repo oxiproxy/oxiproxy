@@ -9,7 +9,7 @@ use tracing::{info, error, warn, debug};
 use crate::client::log_collector::LogCollector;
 
 // 从共享库导入隧道模块
-use common::{TunnelConnection, TunnelConnector, TunnelRecvStream, TunnelSendStream};
+use common::{TunnelConnection, TunnelConnector, TunnelRecvStream, TunnelSendStream, TunnelStream};
 use common::utils::create_configured_udp_socket;
 
 // Heartbeat configuration
@@ -103,15 +103,15 @@ async fn connect_to_server(
                 return Err(anyhow::anyhow!("心跳任务结束"));
             }
             // Accept new streams
-            result = conn.accept_bi() => {
+            result = conn.accept_bi_stream() => {
                 match result {
-                    Ok((quic_send, mut quic_recv)) => {
+                    Ok(mut stream) => {
                         let collector = log_collector.clone();
 
                         tokio::spawn(async move {
                             // Read message type (1 byte)
                             let mut msg_type_buf = [0u8; 1];
-                            if quic_recv.read_exact(&mut msg_type_buf).await.is_err() {
+                            if stream.read_exact(&mut msg_type_buf).await.is_err() {
                                 return;
                             }
 
@@ -119,14 +119,14 @@ async fn connect_to_server(
                                 b'p' => {
                                     // 'p' = proxy request
                                     debug!("收到代理请求");
-                                    if let Err(e) = handle_proxy_stream(quic_send, quic_recv).await {
+                                    if let Err(e) = handle_proxy_stream(stream).await {
                                         error!("代理流处理错误: {}", e);
                                     }
                                 }
                                 b'l' => {
                                     // 'l' = log request
                                     debug!("收到日志请求");
-                                    if let Err(e) = handle_log_request(quic_send, quic_recv, collector).await {
+                                    if let Err(e) = handle_log_request(stream, collector).await {
                                         error!("日志请求处理错误: {}", e);
                                     }
                                 }
@@ -146,22 +146,19 @@ async fn connect_to_server(
     }
 }
 
-async fn handle_proxy_stream(
-    quic_send: Box<dyn TunnelSendStream>,
-    mut quic_recv: Box<dyn TunnelRecvStream>,
-) -> Result<()> {
+async fn handle_proxy_stream(mut stream: Box<dyn TunnelStream>) -> Result<()> {
     // Read protocol type (1 byte)
     let mut proto_buf = [0u8; 1];
-    quic_recv.read_exact(&mut proto_buf).await?;
+    stream.read_exact(&mut proto_buf).await?;
     let protocol_type = proto_buf[0];
 
     // Read target address (format: 2 byte length + content)
     let mut len_buf = [0u8; 2];
-    quic_recv.read_exact(&mut len_buf).await?;
+    stream.read_exact(&mut len_buf).await?;
     let len = u16::from_be_bytes(len_buf) as usize;
 
     let mut addr_buf = vec![0u8; len];
-    quic_recv.read_exact(&mut addr_buf).await?;
+    stream.read_exact(&mut addr_buf).await?;
     let target_addr = String::from_utf8(addr_buf)?;
 
     debug!("目标地址: {}, 协议: {}", target_addr,
@@ -169,14 +166,8 @@ async fn handle_proxy_stream(
 
     // Connect to target service based on protocol type
     match protocol_type {
-        b't' => {
-            // TCP connection
-            handle_tcp_proxy(quic_send, quic_recv, &target_addr).await?;
-        }
-        b'u' => {
-            // UDP connection
-            handle_udp_proxy(quic_send, quic_recv, &target_addr).await?;
-        }
+        b't' => handle_tcp_proxy(stream, &target_addr).await?,
+        b'u' => handle_udp_proxy(stream, &target_addr).await?,
         _ => {
             error!("未知协议类型: {}", protocol_type);
             return Err(anyhow::anyhow!("未知协议类型: {}", protocol_type));
@@ -187,8 +178,7 @@ async fn handle_proxy_stream(
 }
 
 async fn handle_tcp_proxy(
-    mut quic_send: Box<dyn TunnelSendStream>,
-    mut quic_recv: Box<dyn TunnelRecvStream>,
+    mut tunnel: Box<dyn TunnelStream>,
     target_addr: &str,
 ) -> Result<()> {
     // Connect to target service
@@ -196,68 +186,30 @@ async fn handle_tcp_proxy(
 
     debug!("已连接目标服务: {}", target_addr);
 
-    let (mut tcp_read, mut tcp_write) = tcp_stream.split();
-
-    // Tunnel -> TCP
-    let tunnel_to_tcp = async {
-        let mut buf = vec![0u8; 32768];
-        loop {
-            match quic_recv.read(&mut buf).await? {
-                Some(n) => {
-                    if n == 0 {
-                        break;
-                    }
-                    tcp_write.write_all(&buf[..n]).await?;
-                }
-                None => break,
-            }
-        }
-        let _ = tcp_write.shutdown().await;
-        Ok::<_, anyhow::Error>(())
-    };
-
-    // TCP -> Tunnel
-    let tcp_to_tunnel = async {
-        let mut buf = vec![0u8; 32768];
-        loop {
-            let n = tcp_read.read(&mut buf).await?;
-            if n == 0 {
-                break;
-            }
-            quic_send.write_all(&buf[..n]).await?;
-        }
-        let _ = quic_send.finish().await;
-        Ok::<_, anyhow::Error>(())
-    };
-
-    let (res1, res2) = tokio::join!(tunnel_to_tcp, tcp_to_tunnel);
-    if let Err(e) = res1 {
-        debug!("Tunnel->TCP 传输结束: {}", e);
-    }
-    if let Err(e) = res2 {
-        debug!("TCP->Tunnel 传输结束: {}", e);
+    // tokio::io::copy_bidirectional 双向零拷贝转发
+    if let Err(e) = tokio::io::copy_bidirectional(&mut tunnel, &mut tcp_stream).await {
+        debug!("Tunnel<->TCP 传输结束: {}", e);
     }
 
     Ok(())
 }
 
 async fn handle_udp_proxy(
-    mut quic_send: Box<dyn TunnelSendStream>,
-    mut quic_recv: Box<dyn TunnelRecvStream>,
+    mut tunnel: Box<dyn TunnelStream>,
     target_addr: &str,
 ) -> Result<()> {
     // Bind a UDP socket
     let socket = create_configured_udp_socket("0.0.0.0:0".parse()?).await?;
     debug!("UDP 代理已启动: {}", target_addr);
 
-    // Read initial UDP data from server
+    // Read initial UDP data from server（使用 AsyncReadExt::read；0 字节视为 EOF）
     let mut recv_buf = vec![0u8; 65535];
-    let initial_len = match quic_recv.read(&mut recv_buf).await? {
-        Some(n) => n,
-        None => {
+    let initial_len = match tunnel.read(&mut recv_buf).await? {
+        0 => {
             debug!("未收到初始 UDP 数据");
             return Ok(());
         }
+        n => n,
     };
 
     // Send data to target address
@@ -271,27 +223,21 @@ async fn handle_udp_proxy(
     let mut response_buf = vec![0u8; 65535];
     loop {
         tokio::select! {
-            // Read data from QUIC (more UDP packets from server)
-            result = quic_recv.read(&mut recv_buf) => {
+            // Read data from tunnel (more UDP packets from server)
+            result = tunnel.read(&mut recv_buf) => {
                 match result? {
-                    Some(n) => {
-                        if n > 0 {
-                            // Forward to target
-                            socket.send_to(&recv_buf[..n], target_addr).await?;
-                            debug!("Forwarded UDP packet: {} bytes", n);
-                        } else {
-                            break;
-                        }
+                    0 => break, // EOF
+                    n => {
+                        socket.send_to(&recv_buf[..n], target_addr).await?;
+                        debug!("Forwarded UDP packet: {} bytes", n);
                     }
-                    None => break,
                 }
             }
             // Read UDP response from target
             result = socket.recv_from(&mut response_buf) => {
                 match result {
                     Ok((len, _from)) => {
-                        // Send back to server
-                        quic_send.write_all(&response_buf[..len]).await?;
+                        tunnel.write_all(&response_buf[..len]).await?;
                     }
                     Err(e) => {
                         error!("UDP 接收错误: {}", e);
@@ -302,8 +248,8 @@ async fn handle_udp_proxy(
         }
     }
 
-    // Close QUIC stream
-    quic_send.finish().await?;
+    // Close tunnel stream
+    tunnel.shutdown().await?;
 
     Ok(())
 }
@@ -340,13 +286,12 @@ async fn send_heartbeat(conn: &Arc<Box<dyn TunnelConnection>>) -> Result<()> {
 
 /// Handle log request
 async fn handle_log_request(
-    mut quic_send: Box<dyn TunnelSendStream>,
-    mut quic_recv: Box<dyn TunnelRecvStream>,
+    mut stream: Box<dyn TunnelStream>,
     log_collector: LogCollector,
 ) -> Result<()> {
     // Read requested log count (2 bytes)
     let mut count_buf = [0u8; 2];
-    quic_recv.read_exact(&mut count_buf).await?;
+    stream.read_exact(&mut count_buf).await?;
     let count = u16::from_be_bytes(count_buf) as usize;
 
     debug!("Requested log count: {}", count);
@@ -364,11 +309,11 @@ async fn handle_log_request(
 
     // Send log data length (4 bytes)
     let len = logs_bytes.len() as u32;
-    quic_send.write_all(&len.to_be_bytes()).await?;
+    stream.write_all(&len.to_be_bytes()).await?;
 
     // Send log data
-    quic_send.write_all(logs_bytes).await?;
-    quic_send.finish().await?;
+    stream.write_all(logs_bytes).await?;
+    stream.shutdown().await?;
 
     debug!("已发送 {} 条日志 ({} 字节)", logs.len(), logs_bytes.len());
 

@@ -12,6 +12,7 @@ use tracing::{info, error, warn, debug};
 
 use common::{TunnelConnector, QuicConnector, KcpConnector, TcpTunnelConnector, TunnelProtocol, CertVerificationMode};
 use common::protocol::client_config::ServerProxyGroup;
+use common::utils::ReconnectBackoff;
 
 use crate::client::connector;
 use crate::client::log_collector::LogCollector;
@@ -150,6 +151,7 @@ impl ConnectionManager {
         let cert_fingerprints = group.cert_fingerprints.clone();
 
         let handle = tokio::spawn(async move {
+            let mut backoff = ReconnectBackoff::default_params();
             loop {
                 // 创建连接器
                 let connector: Arc<dyn TunnelConnector> = match protocol {
@@ -168,8 +170,12 @@ impl ConnectionManager {
                         match QuicConnector::new(verification_mode) {
                             Ok(c) => Arc::new(c),
                             Err(e) => {
-                                error!("节点 #{} 创建 QUIC 连接器失败: {}", node_id, e);
-                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                let delay = backoff.next_delay();
+                                error!("节点 #{} 创建 QUIC 连接器失败: {}，{:.1}s 后重试", node_id, e, delay.as_secs_f32());
+                                tokio::select! {
+                                    _ = tokio::time::sleep(delay) => {}
+                                    _ = cancel_clone.cancelled() => return,
+                                }
                                 continue;
                             }
                         }
@@ -183,6 +189,7 @@ impl ConnectionManager {
                 };
 
                 // 连接并保持
+                let connection_start = std::time::Instant::now();
                 tokio::select! {
                     result = connector::connect_once(
                         connector,
@@ -206,9 +213,15 @@ impl ConnectionManager {
                     return;
                 }
 
-                warn!("节点 #{} 连接断开，5秒后重连...", node_id);
+                // 连接存活超过 30 秒则视为稳定，重置退避（参考 rathole client.rs:534-536）
+                if connection_start.elapsed() >= std::time::Duration::from_secs(30) {
+                    backoff.reset();
+                }
+
+                let delay = backoff.next_delay();
+                warn!("节点 #{} 连接断开，{:.1}s 后重连...", node_id, delay.as_secs_f32());
                 tokio::select! {
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+                    _ = tokio::time::sleep(delay) => {}
                     _ = cancel_clone.cancelled() => {
                         info!("节点 #{} 重连已取消", node_id);
                         return;

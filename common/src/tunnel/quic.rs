@@ -20,7 +20,7 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use sha2::{Sha256, Digest};
 
-use super::traits::{TunnelConnection, TunnelConnector, TunnelListener, TunnelRecvStream, TunnelSendStream};
+use super::traits::{TunnelConnection, TunnelConnector, TunnelListener, TunnelRecvStream, TunnelSendStream, TunnelStream};
 
 /// QUIC 发送流包装器
 pub struct QuicSendStream {
@@ -109,6 +109,18 @@ impl TunnelConnection for QuicConnection {
             Box::new(QuicSendStream::new(send)),
             Box::new(QuicRecvStream::new(recv)),
         ))
+    }
+
+    async fn open_bi_stream(&self) -> Result<Box<dyn TunnelStream>> {
+        let (send, recv) = self.inner.open_bi().await?;
+        // quinn 的 RecvStream 实现 AsyncRead、SendStream 实现 AsyncWrite
+        // tokio::io::join 把两半合并为同时实现 AsyncRead + AsyncWrite 的 Join<R, W>
+        Ok(Box::new(tokio::io::join(recv, send)))
+    }
+
+    async fn accept_bi_stream(&self) -> Result<Box<dyn TunnelStream>> {
+        let (send, recv) = self.inner.accept_bi().await?;
+        Ok(Box::new(tokio::io::join(recv, send)))
     }
 
     async fn open_uni(&self) -> Result<Box<dyn TunnelSendStream>> {

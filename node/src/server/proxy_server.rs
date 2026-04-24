@@ -19,7 +19,7 @@ use common::KcpConfig;
 
 // 从共享库导入隧道模块
 use common::{
-    TunnelConnection, TunnelSendStream, TunnelRecvStream,
+    TunnelConnection, TunnelSendStream, TunnelRecvStream, TunnelStream,
     TunnelListener, KcpListener, TcpTunnelListener, QuicSendStream, QuicRecvStream
 };
 use common::utils::create_configured_udp_socket;
@@ -888,28 +888,28 @@ async fn handle_tunnel_client_auth(
 
     // Loop to accept proxy stream requests
     loop {
-        match conn.accept_bi().await {
-            Ok((send, mut recv)) => {
+        match conn.accept_bi_stream().await {
+            Ok(mut stream) => {
                 let conn_clone = conn.clone();
                 let tunnel_connections_clone = tunnel_connections.clone();
 
                 tokio::spawn(async move {
                     // Read message type
                     let mut msg_type = [0u8; 1];
-                    if recv.read_exact(&mut msg_type).await.is_err() {
+                    if stream.read_exact(&mut msg_type).await.is_err() {
                         return;
                     }
 
                     match msg_type[0] {
                         b'h' => {
                             // Heartbeat request
-                            if let Err(e) = handle_tunnel_heartbeat(send).await {
+                            if let Err(e) = handle_tunnel_heartbeat(stream).await {
                                 debug!("Heartbeat error: {}", e);
                             }
                         }
                         _ => {
                             // Other message types
-                            if let Err(e) = handle_tunnel_proxy_stream(send, recv, conn_clone, tunnel_connections_clone).await {
+                            if let Err(e) = handle_tunnel_proxy_stream(stream, conn_clone, tunnel_connections_clone).await {
                                 error!("Tunnel proxy stream error: {}", e);
                             }
                         }
@@ -950,71 +950,36 @@ async fn handle_tunnel_client_auth(
 }
 
 /// Handle heartbeat for tunnel connections
-async fn handle_tunnel_heartbeat(mut send: Box<dyn TunnelSendStream>) -> Result<()> {
-    send.write_all(&[b'h']).await?;
-    send.finish().await?;
+async fn handle_tunnel_heartbeat(mut stream: Box<dyn TunnelStream>) -> Result<()> {
+    stream.write_all(&[b'h']).await?;
+    stream.shutdown().await?;
     Ok(())
 }
 
 /// Handle proxy stream for tunnel connections
+///
+/// 使用 `tokio::io::copy_bidirectional` 替代手写双向复制循环：
+/// 内核感知背压、避免每连接堆分配 64KB buffer 和双 task 调度开销。
 async fn handle_tunnel_proxy_stream(
-    mut tunnel_send: Box<dyn TunnelSendStream>,
-    mut tunnel_recv: Box<dyn TunnelRecvStream>,
+    mut tunnel: Box<dyn TunnelStream>,
     _conn: Arc<Box<dyn TunnelConnection>>,
     _connections: Arc<RwLock<HashMap<String, Arc<Box<dyn TunnelConnection>>>>>,
 ) -> Result<()> {
     // Read target address
     let mut len_buf = [0u8; 2];
-    tunnel_recv.read_exact(&mut len_buf).await?;
+    tunnel.read_exact(&mut len_buf).await?;
     let len = u16::from_be_bytes(len_buf) as usize;
 
     let mut addr_buf = vec![0u8; len];
-    tunnel_recv.read_exact(&mut addr_buf).await?;
+    tunnel.read_exact(&mut addr_buf).await?;
     let target_addr = String::from_utf8(addr_buf)?;
 
     // Connect to target service
     let mut tcp_stream = TcpStream::connect(&target_addr).await?;
 
-    let (mut tcp_read, mut tcp_write) = tcp_stream.split();
-
-    // Tunnel -> TCP
-    let tunnel_to_tcp = async {
-        let mut buf = vec![0u8; 32768];
-        loop {
-            match tunnel_recv.read(&mut buf).await? {
-                Some(n) => {
-                    if n == 0 {
-                        break;
-                    }
-                    tcp_write.write_all(&buf[..n]).await?;
-                }
-                None => break,
-            }
-        }
-        let _ = tcp_write.shutdown().await;
-        Ok::<_, anyhow::Error>(())
-    };
-
-    // TCP -> Tunnel
-    let tcp_to_tunnel = async {
-        let mut buf = vec![0u8; 32768];
-        loop {
-            let n = tcp_read.read(&mut buf).await?;
-            if n == 0 {
-                break;
-            }
-            tunnel_send.write_all(&buf[..n]).await?;
-        }
-        let _ = tunnel_send.finish().await;
-        Ok::<_, anyhow::Error>(())
-    };
-
-    let (res1, res2) = tokio::join!(tunnel_to_tcp, tcp_to_tunnel);
-    if let Err(e) = res1 {
-        error!("Tunnel->TCP error: {}", e);
-    }
-    if let Err(e) = res2 {
-        error!("TCP->Tunnel error: {}", e);
+    // 双向零拷贝转发
+    if let Err(e) = tokio::io::copy_bidirectional(&mut tunnel, &mut tcp_stream).await {
+        debug!("Tunnel<->TCP transfer ended: {}", e);
     }
 
     Ok(())
@@ -1029,7 +994,7 @@ async fn handle_heartbeat(mut send: quinn::SendStream) -> Result<()> {
 }
 
 async fn handle_proxy_stream(
-    mut quic_send: quinn::SendStream,
+    quic_send: quinn::SendStream,
     mut quic_recv: quinn::RecvStream,
     _conn: Arc<quinn::Connection>,
     _connections: Arc<RwLock<HashMap<String, Arc<quinn::Connection>>>>,
@@ -1046,48 +1011,11 @@ async fn handle_proxy_stream(
     // 连接到目标服务
     let mut tcp_stream = TcpStream::connect(&target_addr).await?;
 
-    let (mut tcp_read, mut tcp_write) = tcp_stream.split();
-
-    // QUIC -> TCP
-    let quic_to_tcp = async {
-        let mut buf = vec![0u8; 32768];
-        loop {
-            match quic_recv.read(&mut buf).await? {
-                Some(n) => {
-                    if n == 0 {
-                        break;
-                    }
-                    tcp_write.write_all(&buf[..n]).await?;
-                }
-                None => break,
-            }
-        }
-        let _ = tcp_write.shutdown().await;
-        Ok::<_, anyhow::Error>(())
-    };
-
-    // TCP -> QUIC
-    let tcp_to_quic = async {
-        let mut buf = vec![0u8; 32768];
-        loop {
-            let n = tcp_read.read(&mut buf).await?;
-            if n == 0 {
-                break;
-            }
-            quic_send.write_all(&buf[..n]).await?;
-        }
-        quic_send.finish()?;
-        Ok::<_, anyhow::Error>(())
-    };
-
-    let (res1, res2) = tokio::join!(quic_to_tcp, tcp_to_quic);
-    if let Err(e) = res1 {
-        error!("QUIC->TCP错误: {}", e);
+    // 合并 recv/send 为单一 AsyncRead + AsyncWrite，使用 copy_bidirectional 零拷贝转发
+    let mut quic = tokio::io::join(quic_recv, quic_send);
+    if let Err(e) = tokio::io::copy_bidirectional(&mut quic, &mut tcp_stream).await {
+        debug!("QUIC<->TCP transfer ended: {}", e);
     }
-    if let Err(e) = res2 {
-        error!("TCP->QUIC错误: {}", e);
-    }
-
     Ok(())
 }
 

@@ -2,6 +2,26 @@
 members = ["node", "client", "common", "controller"]
 resolver = "3"
 
+# 发布构建优化：参考 rathole 的激进调优
+# LTO + 单 codegen unit 提升运行时性能 ~10-15%
+# panic=abort 消除展开元数据，缩小二进制并简化异步任务
+# strip 移除调试符号（进一步缩小 2-5MB）
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+strip = true
+
+# 最小尺寸构建（适用于嵌入式场景）
+[profile.minimal]
+inherits = "release"
+opt-level = "z"
+
+# 基准测试保留调试信息
+[profile.bench]
+debug = 1
+
 [workspace.dependencies]
 # Internal
 common = { path = "common" }
@@ -70,6 +90,7 @@ time = "0.3"
 # Misc
 uuid = { version = "1.0", features = ["v4", "serde"] }
 rand = "0.9.2"
+parking_lot = "0.12"
 tempfile = "3"
 rust-embed = { version = "8", features = ["axum"] }
 mime_guess = "2"

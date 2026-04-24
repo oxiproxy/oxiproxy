@@ -1,6 +1,61 @@
 use anyhow::Result;
 use std::net::SocketAddr;
+use std::time::Duration;
 use socket2::{Socket, Domain, Type, Protocol};
+
+/// 重连退避策略：指数退避 + 抖动
+///
+/// 参考 rathole 的 `run_control_chan_backoff`（src/constants.rs:18-26）。
+/// 避免所有节点/客户端在 Controller 宕机时同步重试造成的 "thundering herd"。
+///
+/// 行为：
+/// - 首次等待 `initial`
+/// - 每次失败翻倍，上限 `max`
+/// - 每次叠加 ±20% 随机抖动
+#[derive(Clone, Debug)]
+pub struct ReconnectBackoff {
+    current: Duration,
+    initial: Duration,
+    max: Duration,
+}
+
+impl ReconnectBackoff {
+    /// 创建新的退避策略
+    ///
+    /// 推荐参数：initial=1s, max=60s
+    pub fn new(initial: Duration, max: Duration) -> Self {
+        Self {
+            current: initial,
+            initial,
+            max,
+        }
+    }
+
+    /// 默认参数（initial=1s, max=60s）
+    pub fn default_params() -> Self {
+        Self::new(Duration::from_secs(1), Duration::from_secs(60))
+    }
+
+    /// 获取下一次等待时长并更新内部状态
+    pub fn next_delay(&mut self) -> Duration {
+        use rand::Rng;
+        let base = self.current;
+        // ±20% 抖动
+        let jitter_ratio: f64 = rand::rng().random_range(-0.2..=0.2);
+        let base_ms = base.as_millis() as f64;
+        let delay_ms = (base_ms * (1.0 + jitter_ratio)).max(0.0) as u64;
+
+        // 为下一次做翻倍
+        self.current = (self.current * 2).min(self.max);
+
+        Duration::from_millis(delay_ms)
+    }
+
+    /// 连接成功后重置
+    pub fn reset(&mut self) {
+        self.current = self.initial;
+    }
+}
 
 #[cfg(windows)]
 fn apply_windows_udp_fix(socket: &Socket) -> Result<()> {

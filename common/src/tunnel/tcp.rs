@@ -13,12 +13,32 @@ use futures::{AsyncReadExt, AsyncWriteExt};
 use futures::io::{ReadHalf, WriteHalf};
 use std::net::SocketAddr;
 use std::task::Poll;
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
-use tokio_util::compat::TokioAsyncReadCompatExt;
+use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 use tracing::{debug, warn};
 use yamux::{Config as YamuxConfig, Connection as YamuxConnection, Mode, Stream as YamuxStream};
 
-use super::traits::{TunnelConnection, TunnelConnector, TunnelListener, TunnelRecvStream, TunnelSendStream};
+/// 应用标准 TCP 优化套接字选项（参考 rathole helper.rs:19-36）
+/// - TCP_NODELAY: 禁用 Nagle，降低小包延迟
+/// - SO_KEEPALIVE + TCP_KEEPIDLE/INTVL: 及时检测半开连接
+fn apply_tcp_socket_opts(stream: &tokio::net::TcpStream) {
+    // TCP_NODELAY（yamux 会频繁发送小帧，必须开启）
+    if let Err(e) = stream.set_nodelay(true) {
+        warn!("设置 TCP_NODELAY 失败: {}", e);
+    }
+
+    // keepalive: 60s 空闲后开始探测，每 10s 一次
+    let sock_ref = socket2::SockRef::from(stream);
+    let ka = socket2::TcpKeepalive::new()
+        .with_time(Duration::from_secs(60))
+        .with_interval(Duration::from_secs(10));
+    if let Err(e) = sock_ref.set_tcp_keepalive(&ka) {
+        warn!("设置 TCP keepalive 失败: {}", e);
+    }
+}
+
+use super::traits::{TunnelConnection, TunnelConnector, TunnelListener, TunnelRecvStream, TunnelSendStream, TunnelStream};
 
 /// TCP 发送流（基于 yamux Stream 写半流）
 pub struct TcpTunnelSendStream {
@@ -244,6 +264,31 @@ impl TunnelConnection for TcpTunnelConnection {
         ))
     }
 
+    async fn open_bi_stream(&self) -> Result<Box<dyn TunnelStream>> {
+        let (response_tx, response_rx) = oneshot::channel();
+
+        self.outbound_tx
+            .send(OutboundRequest { response_tx })
+            .await
+            .map_err(|_| anyhow!("connection driver closed"))?;
+
+        let stream = response_rx
+            .await
+            .map_err(|_| anyhow!("connection driver closed"))??;
+
+        // yamux::Stream 实现 futures::AsyncRead + AsyncWrite；compat() 转为 tokio 版本
+        Ok(Box::new(stream.compat()))
+    }
+
+    async fn accept_bi_stream(&self) -> Result<Box<dyn TunnelStream>> {
+        let stream = {
+            let mut rx = self.inbound_rx.lock().await;
+            rx.recv().await.ok_or_else(|| anyhow!("connection closed"))?
+        };
+
+        Ok(Box::new(stream.compat()))
+    }
+
     async fn open_uni(&self) -> Result<Box<dyn TunnelSendStream>> {
         let (response_tx, response_rx) = oneshot::channel();
 
@@ -292,7 +337,7 @@ impl TcpTunnelConnector {
 impl TunnelConnector for TcpTunnelConnector {
     async fn connect(&self, addr: SocketAddr) -> Result<Box<dyn TunnelConnection>> {
         let stream = tokio::net::TcpStream::connect(addr).await?;
-        stream.set_nodelay(true)?;
+        apply_tcp_socket_opts(&stream);
         Ok(Box::new(TcpTunnelConnection::new(stream, addr, true)))
     }
 }
@@ -313,7 +358,7 @@ impl TcpTunnelListener {
 impl TunnelListener for TcpTunnelListener {
     async fn accept(&self) -> Result<Box<dyn TunnelConnection>> {
         let (stream, addr) = self.listener.accept().await?;
-        stream.set_nodelay(true)?;
+        apply_tcp_socket_opts(&stream);
         Ok(Box::new(TcpTunnelConnection::new(stream, addr, false)))
     }
 }

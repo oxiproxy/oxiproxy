@@ -14,11 +14,11 @@ use std::net::SocketAddr;
 use std::task::Poll;
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio_kcp::{KcpConfig as TokioKcpConfig, KcpListener as TokioKcpListener, KcpStream};
-use tokio_util::compat::TokioAsyncReadCompatExt;
+use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 use tracing::{debug, warn};
 use yamux::{Config as YamuxConfig, Connection as YamuxConnection, Mode, Stream as YamuxStream};
 
-use super::traits::{TunnelConnection, TunnelConnector, TunnelListener, TunnelRecvStream, TunnelSendStream};
+use super::traits::{TunnelConnection, TunnelConnector, TunnelListener, TunnelRecvStream, TunnelSendStream, TunnelStream};
 use crate::config::KcpConfig;
 use crate::utils::create_configured_udp_socket;
 
@@ -263,6 +263,31 @@ impl TunnelConnection for KcpConnection {
             Box::new(KcpSendStream::new(writer)),
             Box::new(KcpRecvStream::new(reader)),
         ))
+    }
+
+    async fn open_bi_stream(&self) -> Result<Box<dyn TunnelStream>> {
+        let (response_tx, response_rx) = oneshot::channel();
+
+        self.outbound_tx
+            .send(OutboundRequest { response_tx })
+            .await
+            .map_err(|_| anyhow!("connection driver closed"))?;
+
+        let stream = response_rx
+            .await
+            .map_err(|_| anyhow!("connection driver closed"))??;
+
+        // yamux::Stream 实现 futures::AsyncRead + AsyncWrite；compat() 转为 tokio 版本
+        Ok(Box::new(stream.compat()))
+    }
+
+    async fn accept_bi_stream(&self) -> Result<Box<dyn TunnelStream>> {
+        let stream = {
+            let mut rx = self.inbound_rx.lock().await;
+            rx.recv().await.ok_or_else(|| anyhow!("connection closed"))?
+        };
+
+        Ok(Box::new(stream.compat()))
     }
 
     async fn open_uni(&self) -> Result<Box<dyn TunnelSendStream>> {

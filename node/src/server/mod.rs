@@ -16,6 +16,7 @@ use tracing::{info, error, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use common::protocol::control::ProxyControl;
 use common::protocol::auth::ClientAuthProvider;
+use common::utils::ReconnectBackoff;
 
 /// Agent Server 启动（Controller 模式，gRPC）
 ///
@@ -159,6 +160,7 @@ pub async fn run_server_controller_mode(
             if grpc_client_reconnect.shared_sender().send(test_msg).await.is_err() {
                 warn!("检测到 gRPC 连接断开，开始重连...");
 
+                let mut backoff = ReconnectBackoff::default_params();
                 loop {
                     match grpc_client_reconnect.reconnect(
                         &controller_url_clone,
@@ -201,9 +203,10 @@ pub async fn run_server_controller_mode(
                             break;
                         }
                         Err(e) => {
+                            let delay = backoff.next_delay();
                             error!("gRPC 重连失败: {}", e);
-                            warn!("5秒后重试...");
-                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            warn!("{:.1}s 后重试...", delay.as_secs_f32());
+                            tokio::time::sleep(delay).await;
                         }
                     }
                 }

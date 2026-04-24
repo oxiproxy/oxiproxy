@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use serde::{Serialize, Deserialize};
 use tracing::{Level, Subscriber};
 use tracing_subscriber::layer::Context;
@@ -29,7 +30,8 @@ impl LogCollector {
     }
 
     pub fn add_log(&self, level: String, message: String) {
-        let mut logs = self.logs.lock().unwrap();
+        // parking_lot::Mutex 不会中毒，无需 .unwrap()
+        let mut logs = self.logs.lock();
 
         // 如果达到最大容量，移除最旧的日志
         if logs.len() >= self.max_entries {
@@ -45,14 +47,14 @@ impl LogCollector {
 
     /// 获取最近的N条日志
     pub fn get_recent_logs(&self, count: usize) -> Vec<LogEntry> {
-        let logs = self.logs.lock().unwrap();
+        let logs = self.logs.lock();
         let start = logs.len().saturating_sub(count);
         logs.iter().skip(start).cloned().collect()
     }
 
     /// 获取所有日志
     pub fn get_all_logs(&self) -> Vec<LogEntry> {
-        let logs = self.logs.lock().unwrap();
+        let logs = self.logs.lock();
         logs.iter().cloned().collect()
     }
 }

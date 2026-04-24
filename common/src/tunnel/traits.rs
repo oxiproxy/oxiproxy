@@ -6,6 +6,17 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use std::net::SocketAddr;
+use tokio::io::{AsyncRead, AsyncWrite};
+
+/// 双向隧道流接口（原生 tokio I/O）
+///
+/// 实现 `tokio::io::AsyncRead + AsyncWrite`，可直接用于 `tokio::io::copy_bidirectional`，
+/// 热路径零拷贝转发，避免手写 read/write 循环的中间 buffer 与额外 task 调度开销。
+///
+/// 通过 blanket impl 自动实现所有满足条件的类型。
+pub trait TunnelStream: AsyncRead + AsyncWrite + Send + Unpin {}
+
+impl<T: AsyncRead + AsyncWrite + Send + Unpin + ?Sized> TunnelStream for T {}
 
 /// 统一发送流接口
 ///
@@ -72,6 +83,15 @@ pub trait TunnelConnection: Send + Sync {
     /// # Returns
     /// 返回 (发送流, 接收流) 元组
     async fn accept_bi(&self) -> Result<(Box<dyn TunnelSendStream>, Box<dyn TunnelRecvStream>)>;
+
+    /// 打开一个双向流（tokio I/O 版本，用于 `copy_bidirectional` 热路径）
+    ///
+    /// 返回一个同时实现 `AsyncRead + AsyncWrite` 的对象，
+    /// 避免 `TunnelSendStream`/`TunnelRecvStream` 拆分带来的双 task 开销。
+    async fn open_bi_stream(&self) -> Result<Box<dyn TunnelStream>>;
+
+    /// 接受一个双向流（tokio I/O 版本，用于 `copy_bidirectional` 热路径）
+    async fn accept_bi_stream(&self) -> Result<Box<dyn TunnelStream>>;
 
     /// 打开一个单向流（只发送）
     async fn open_uni(&self) -> Result<Box<dyn TunnelSendStream>>;

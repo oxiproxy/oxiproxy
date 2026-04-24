@@ -4,7 +4,7 @@ pub mod connection_manager;
 pub mod grpc_client;
 
 use anyhow::Result;
-use std::time::Duration;
+use common::utils::ReconnectBackoff;
 use tracing::{info, error, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*, layer::SubscriberExt};
 use log_collector::{LogCollector, LogCollectorLayer};
@@ -47,11 +47,14 @@ pub async fn run_client(
         log_collector.clone(),
     );
 
-    // 断线重连循环
+    // 断线重连循环（指数退避 + 抖动，避免 Controller 宕机时的重试风暴）
+    let mut backoff = ReconnectBackoff::default_params();
     loop {
         match grpc_client::connect_and_run(&controller_url, &token, tls_ca_cert.as_deref(), log_collector.clone()).await {
             Ok((_client_id, client_name, mut update_rx)) => {
                 info!("已连接控制器: {}", client_name);
+                // 连接成功后重置退避
+                backoff.reset();
 
                 // 接收代理列表推送并调和连接
                 while let Some(server_groups) = update_rx.recv().await {
@@ -66,7 +69,8 @@ pub async fn run_client(
             }
         }
 
-        warn!("5 秒后重连...");
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        let delay = backoff.next_delay();
+        warn!("{:.1}s 后重连...", delay.as_secs_f32());
+        tokio::time::sleep(delay).await;
     }
 }

@@ -21,26 +21,42 @@ struct PendingEntry<T> {
 /// 过期请求的默认超时时间
 const STALE_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// 后台清理间隔
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
+
 impl<T: Send + 'static> PendingRequests<T> {
     pub fn new() -> Self {
-        Self {
-            pending: Arc::new(Mutex::new(HashMap::new())),
-        }
+        let pending: Arc<Mutex<HashMap<String, PendingEntry<T>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        // 启动后台清理任务，定期扫描过期请求
+        // 使用 Weak 引用：所有克隆都释放时清理任务自动退出
+        let weak = Arc::downgrade(&pending);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(CLEANUP_INTERVAL);
+            interval.tick().await; // 跳过首次立即触发
+            loop {
+                interval.tick().await;
+                let Some(map) = weak.upgrade() else { break };
+                let mut guard = map.lock().await;
+                let now = Instant::now();
+                guard.retain(|_, entry| now.duration_since(entry.created_at) < STALE_REQUEST_TIMEOUT);
+            }
+        });
+
+        Self { pending }
     }
 
     /// 注册一个待处理请求，返回 (request_id, receiver)
+    ///
+    /// 热路径：不再顺带扫描 HashMap（由后台任务负责）。
     pub async fn register(&self) -> (String, oneshot::Receiver<T>) {
         let request_id = Uuid::new_v4().to_string();
         let (tx, rx) = oneshot::channel();
         let mut pending = self.pending.lock().await;
-
-        // 顺便清理过期请求，防止内存泄漏
-        let now = Instant::now();
-        pending.retain(|_, entry| now.duration_since(entry.created_at) < STALE_REQUEST_TIMEOUT);
-
         pending.insert(request_id.clone(), PendingEntry {
             sender: tx,
-            created_at: now,
+            created_at: Instant::now(),
         });
         (request_id, rx)
     }

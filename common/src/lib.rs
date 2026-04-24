@@ -14,6 +14,7 @@ pub use tunnel::{
     TunnelProtocol,
     TunnelSendStream,
     TunnelRecvStream,
+    TunnelStream,
     TunnelConnection,
     TunnelConnector,
     TunnelListener,
