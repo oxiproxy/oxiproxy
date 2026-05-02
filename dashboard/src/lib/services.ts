@@ -253,6 +253,14 @@ export const proxyService = {
     const response = await api.put<ApiResponse<string>>(`/proxies/group/${groupId}`, data);
     return response.data;
   },
+
+  async addPortsToProxyGroup(groupId: string, data: {
+    localPorts: number[];
+    remotePorts: number[];
+  }): Promise<ApiResponse<Proxy[]>> {
+    const response = await api.post<ApiResponse<Proxy[]>>(`/proxies/group/${groupId}/proxies`, data);
+    return response.data;
+  },
 };
 
 // ============ 流量服务 ============

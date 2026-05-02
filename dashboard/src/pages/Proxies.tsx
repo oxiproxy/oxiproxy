@@ -51,6 +51,8 @@ export default function Proxies() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [editingGroupPorts, setEditingGroupPorts] = useState<{ id: number; remotePort: string; localPort: string }[]>([]);
+  const [originalGroupPortIds, setOriginalGroupPortIds] = useState<Set<number>>(new Set());
+  const [nextTempPortId, setNextTempPortId] = useState<number>(-1);
   useEffect(() => {
     loadData();
   }, []);
@@ -130,6 +132,9 @@ export default function Proxies() {
     });
     setEditingProxy(null);
     setEditingGroupId(null);
+    setEditingGroupPorts([]);
+    setOriginalGroupPortIds(new Set());
+    setNextTempPortId(-1);
   };
 
   const handleCreateProxy = async () => {
@@ -574,18 +579,63 @@ export default function Proxies() {
       remotePort: '',
       enabled: group.enabled,
     });
+    const sorted = group.proxies.slice().sort((a, b) => a.remotePort - b.remotePort);
     setEditingGroupPorts(
-      group.proxies
-        .sort((a, b) => a.remotePort - b.remotePort)
-        .map(p => ({ id: p.id, remotePort: p.remotePort.toString(), localPort: p.localPort.toString() }))
+      sorted.map(p => ({ id: p.id, remotePort: p.remotePort.toString(), localPort: p.localPort.toString() }))
     );
+    setOriginalGroupPortIds(new Set(sorted.map(p => p.id)));
+    setNextTempPortId(-1);
     setShowCreateModal(true);
+  };
+
+  const handleAddGroupPort = () => {
+    // 用最后一行的 localPort 作为默认（或 80）
+    const last = editingGroupPorts[editingGroupPorts.length - 1];
+    const defaultLocal = last ? last.localPort : '80';
+    setEditingGroupPorts([
+      ...editingGroupPorts,
+      { id: nextTempPortId, remotePort: '', localPort: defaultLocal },
+    ]);
+    setNextTempPortId(nextTempPortId - 1);
+  };
+
+  const handleRemoveGroupPort = (idx: number) => {
+    if (editingGroupPorts.length <= 1) {
+      showToast('代理组至少需要保留一个端口', 'error');
+      return;
+    }
+    const next = editingGroupPorts.slice();
+    next.splice(idx, 1);
+    setEditingGroupPorts(next);
   };
 
   const handleUpdateGroup = async () => {
     if (!editingGroupId) return;
+
+    // 校验所有端口
+    for (const item of editingGroupPorts) {
+      const rp = parseInt(item.remotePort);
+      const lp = parseInt(item.localPort);
+      if (isNaN(rp) || rp < 1 || rp > 65535) {
+        showToast(`无效的节点端口: ${item.remotePort || '(空)'}`, 'error');
+        return;
+      }
+      if (isNaN(lp) || lp < 1 || lp > 65535) {
+        showToast(`无效的本地端口: ${item.localPort || '(空)'}`, 'error');
+        return;
+      }
+    }
+
+    // 检查组内节点端口重复
+    const remotePorts = editingGroupPorts.map(p => parseInt(p.remotePort));
+    const dup = remotePorts.find((p, i) => remotePorts.indexOf(p) !== i);
+    if (dup !== undefined) {
+      showToast(`组内节点端口 ${dup} 重复`, 'error');
+      return;
+    }
+
     try {
-      // 更新组共享属性
+      // 1. 更新组共享属性
       const response = await proxyService.updateProxyGroup(editingGroupId, {
         name: formData.name || undefined,
         type: formData.type || undefined,
@@ -596,18 +646,49 @@ export default function Proxies() {
         return;
       }
 
-      // 逐个更新每个子代理的端口
-      for (const item of editingGroupPorts) {
+      // 2. 计算 diff
+      const currentIds = new Set(editingGroupPorts.filter(p => p.id > 0).map(p => p.id));
+      const toDelete = Array.from(originalGroupPortIds).filter(id => !currentIds.has(id));
+      const toUpdate = editingGroupPorts.filter(p => p.id > 0);
+      const toAdd = editingGroupPorts.filter(p => p.id < 0);
+
+      // 3. 删除移除的端口（先删，避免端口冲突）
+      for (const id of toDelete) {
+        const r = await proxyService.deleteProxy(id);
+        if (!r.success) {
+          showToast(r.message || `删除端口失败 (id=${id})`, 'error');
+          return;
+        }
+      }
+
+      // 4. 更新现有端口
+      for (const item of toUpdate) {
         const remotePort = parseInt(item.remotePort);
         const localPort = parseInt(item.localPort);
-        if (isNaN(remotePort) || isNaN(localPort)) continue;
-        await proxyService.updateProxy(item.id, { remotePort, localPort });
+        const r = await proxyService.updateProxy(item.id, { remotePort, localPort });
+        if (!r.success) {
+          showToast(r.message || `更新端口失败 (id=${item.id})`, 'error');
+          return;
+        }
+      }
+
+      // 5. 追加新端口
+      if (toAdd.length > 0) {
+        const r = await proxyService.addPortsToProxyGroup(editingGroupId, {
+          remotePorts: toAdd.map(p => parseInt(p.remotePort)),
+          localPorts: toAdd.map(p => parseInt(p.localPort)),
+        });
+        if (!r.success) {
+          showToast(r.message || '追加端口失败', 'error');
+          return;
+        }
       }
 
       showToast('代理组更新成功', 'success');
       resetForm();
       setEditingGroupId(null);
       setEditingGroupPorts([]);
+      setOriginalGroupPortIds(new Set());
       setShowCreateModal(false);
       loadData();
     } catch (error) {
@@ -1295,26 +1376,47 @@ export default function Proxies() {
                 </div>
                 {editingGroupId ? (
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">端口映射 ({editingGroupPorts.length} 个)</label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-sm font-medium text-foreground">端口映射 ({editingGroupPorts.length} 个)</label>
+                    <button
+                      type="button"
+                      onClick={handleAddGroupPort}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-primary hover:bg-accent rounded-lg transition-colors"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                      </svg>
+                      添加端口
+                    </button>
+                  </div>
                   <div className="border border-border rounded-xl overflow-hidden">
-                    <div className="grid grid-cols-[1fr_auto_1fr] gap-0 px-3 py-2 bg-muted/50 text-xs font-medium text-muted-foreground border-b border-border">
+                    <div className="grid grid-cols-[1fr_auto_1fr_auto] gap-0 px-3 py-2 bg-muted/50 text-xs font-medium text-muted-foreground border-b border-border">
                       <span>节点端口</span>
                       <span className="px-3"></span>
                       <span>本地端口</span>
+                      <span className="w-8"></span>
                     </div>
                     <div className="max-h-48 overflow-y-auto divide-y divide-border">
-                      {editingGroupPorts.map((item, idx) => (
-                        <div key={item.id} className="grid grid-cols-[1fr_auto_1fr] gap-0 items-center px-3 py-1.5">
-                          <input
-                            type="number"
-                            value={item.remotePort}
-                            onChange={(e) => {
-                              const next = [...editingGroupPorts];
-                              next[idx] = { ...next[idx], remotePort: e.target.value };
-                              setEditingGroupPorts(next);
-                            }}
-                            className="w-full px-2 py-1.5 border border-border rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary bg-muted/50"
-                          />
+                      {editingGroupPorts.map((item, idx) => {
+                        const isNew = item.id < 0;
+                        return (
+                        <div key={item.id} className={`grid grid-cols-[1fr_auto_1fr_auto] gap-0 items-center px-3 py-1.5 ${isNew ? 'bg-green-50/50' : ''}`}>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              value={item.remotePort}
+                              placeholder={isNew ? '新端口' : ''}
+                              onChange={(e) => {
+                                const next = [...editingGroupPorts];
+                                next[idx] = { ...next[idx], remotePort: e.target.value };
+                                setEditingGroupPorts(next);
+                              }}
+                              className="w-full px-2 py-1.5 border border-border rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary bg-muted/50"
+                            />
+                            {isNew && (
+                              <span className="absolute -top-1.5 -right-1.5 px-1 py-0.5 text-[9px] font-semibold text-green-700 bg-green-100 rounded">NEW</span>
+                            )}
+                          </div>
                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 mx-2 text-muted-foreground flex-shrink-0">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                           </svg>
@@ -1328,10 +1430,25 @@ export default function Proxies() {
                             }}
                             className="w-full px-2 py-1.5 border border-border rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary bg-muted/50"
                           />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveGroupPort(idx)}
+                            disabled={editingGroupPorts.length <= 1}
+                            title={editingGroupPorts.length <= 1 ? '至少保留一个端口' : '删除该端口'}
+                            className="ml-2 p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                            </svg>
+                          </button>
                         </div>
-                      ))}
+                      );
+                      })}
                     </div>
                   </div>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    新增的端口将自动加入此代理组（继承组的客户端、节点、协议、本地 IP）
+                  </p>
                 </div>
                 ) : (
                 <div className="grid grid-cols-2 gap-4">

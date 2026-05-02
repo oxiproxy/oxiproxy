@@ -132,6 +132,7 @@ pub fn start_web_server(app_state: AppState) -> tokio::task::JoinHandle<()> {
             .route("/proxies/batch", post(handlers::batch_create_proxies))
             .route("/proxies/group/{group_id}", put(handlers::update_proxy_group).delete(handlers::delete_proxy_group))
             .route("/proxies/group/{group_id}/toggle", post(handlers::toggle_proxy_group))
+            .route("/proxies/group/{group_id}/proxies", post(handlers::add_ports_to_proxy_group))
             .route("/proxies/{id}", put(handlers::update_proxy).delete(handlers::delete_proxy))
             .route("/clients/{id}/proxies", get(handlers::list_proxies_by_client))
             // 流量统计路由
