@@ -9,6 +9,9 @@ pub mod utils;
 pub mod protocol;
 pub mod grpc;
 
+#[cfg(target_os = "linux")]
+pub mod systemd;
+
 
 pub use tunnel::{
     TunnelProtocol,

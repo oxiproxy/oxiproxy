@@ -30,5 +30,8 @@ parking_lot = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Networking_WinSock", "Win32_Foundation"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }
+
 [build-dependencies]
 tonic-build = { workspace = true }

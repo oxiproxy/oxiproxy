@@ -122,6 +122,46 @@ enum Command {
 
     /// 更新到最新版本
     Update,
+
+    /// 安装为 systemd 服务（开机自启，仅 Linux）
+    #[cfg(target_os = "linux")]
+    Install {
+        /// Controller 地址
+        #[arg(long)]
+        controller_url: String,
+
+        /// 客户端 Token
+        #[arg(long)]
+        token: String,
+
+        /// 自定义 CA 证书文件路径
+        #[arg(long)]
+        tls_ca_cert: Option<String>,
+
+        /// 日志目录路径（不指定则由 systemd-journald 收集）
+        #[arg(long)]
+        log_dir: Option<String>,
+
+        /// systemd 服务名
+        #[arg(long, default_value = "oxiproxy-client")]
+        service_name: String,
+
+        /// 运行服务的用户（默认 root）
+        #[arg(long)]
+        user: Option<String>,
+
+        /// 工作目录（默认当前目录）
+        #[arg(long)]
+        working_dir: Option<String>,
+    },
+
+    /// 卸载 systemd 服务（仅 Linux）
+    #[cfg(target_os = "linux")]
+    Uninstall {
+        /// systemd 服务名
+        #[arg(long, default_value = "oxiproxy-client")]
+        service_name: String,
+    },
 }
 
 /// 加载 CA 证书文件内容
@@ -210,9 +250,85 @@ fn main() -> anyhow::Result<()> {
         Command::Update => {
             update_binary()?;
         }
+
+        #[cfg(target_os = "linux")]
+        Command::Install {
+            controller_url,
+            token,
+            tls_ca_cert,
+            log_dir,
+            service_name,
+            user,
+            working_dir,
+        } => {
+            install_systemd_service(
+                controller_url,
+                token,
+                tls_ca_cert,
+                log_dir,
+                service_name,
+                user,
+                working_dir,
+            )?;
+        }
+
+        #[cfg(target_os = "linux")]
+        Command::Uninstall { service_name } => {
+            common::systemd::uninstall_service(&service_name)?;
+        }
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn install_systemd_service(
+    controller_url: String,
+    token: String,
+    tls_ca_cert: Option<String>,
+    log_dir: Option<String>,
+    service_name: String,
+    user: Option<String>,
+    working_dir: Option<String>,
+) -> anyhow::Result<()> {
+    use std::path::PathBuf;
+
+    let binary_path = std::env::current_exe()?
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("解析当前二进制路径失败: {}", e))?;
+
+    let working_dir = match working_dir {
+        Some(p) => PathBuf::from(p),
+        None => std::env::current_dir()?,
+    };
+
+    let mut args = vec![
+        "start".to_string(),
+        "--controller-url".to_string(),
+        controller_url,
+        "--token".to_string(),
+        token,
+    ];
+    if let Some(ca) = tls_ca_cert {
+        args.push("--tls-ca-cert".to_string());
+        args.push(ca);
+    }
+    if let Some(dir) = log_dir {
+        fs::create_dir_all(&dir).ok();
+        args.push("--log-dir".to_string());
+        args.push(dir);
+    }
+
+    let config = common::systemd::SystemdServiceConfig {
+        service_name,
+        description: "OxiProxy Client".to_string(),
+        binary_path,
+        args,
+        working_dir,
+        user,
+    };
+
+    common::systemd::install_service(&config)
 }
 
 #[cfg(unix)]

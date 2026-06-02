@@ -90,6 +90,30 @@ enum Command {
 
     /// 重置 admin 管理员密码
     Passwd,
+
+    /// 安装为 systemd 服务（开机自启，仅 Linux）
+    #[cfg(target_os = "linux")]
+    Install {
+        /// systemd 服务名
+        #[arg(long, default_value = "oxiproxy-controller")]
+        service_name: String,
+
+        /// 运行服务的用户（默认 root）
+        #[arg(long)]
+        user: Option<String>,
+
+        /// 工作目录（默认当前目录；数据库与配置位于此目录下的 data/）
+        #[arg(long)]
+        working_dir: Option<String>,
+    },
+
+    /// 卸载 systemd 服务（仅 Linux）
+    #[cfg(target_os = "linux")]
+    Uninstall {
+        /// systemd 服务名
+        #[arg(long, default_value = "oxiproxy-controller")]
+        service_name: String,
+    },
 }
 
 /// 应用状态
@@ -166,9 +190,50 @@ fn main() -> Result<()> {
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(reset_admin_password())?;
         }
+
+        #[cfg(target_os = "linux")]
+        Command::Install {
+            service_name,
+            user,
+            working_dir,
+        } => {
+            install_systemd_service(service_name, user, working_dir)?;
+        }
+
+        #[cfg(target_os = "linux")]
+        Command::Uninstall { service_name } => {
+            common::systemd::uninstall_service(&service_name)?;
+        }
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn install_systemd_service(
+    service_name: String,
+    user: Option<String>,
+    working_dir: Option<String>,
+) -> Result<()> {
+    let binary_path = std::env::current_exe()?
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("解析当前二进制路径失败: {}", e))?;
+
+    let working_dir = match working_dir {
+        Some(p) => PathBuf::from(p),
+        None => std::env::current_dir()?,
+    };
+
+    let config = common::systemd::SystemdServiceConfig {
+        service_name,
+        description: "OxiProxy Controller".to_string(),
+        binary_path,
+        args: vec!["start".to_string()],
+        working_dir,
+        user,
+    };
+
+    common::systemd::install_service(&config)
 }
 
 #[cfg(unix)]
