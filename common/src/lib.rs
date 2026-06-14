@@ -8,6 +8,7 @@ pub mod config;
 pub mod utils;
 pub mod protocol;
 pub mod grpc;
+pub mod process_status;
 
 #[cfg(target_os = "linux")]
 pub mod systemd;
