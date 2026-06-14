@@ -89,6 +89,58 @@ pub fn uninstall_service(service_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// systemd 服务运行状态查询结果。
+#[derive(Debug, Clone)]
+pub struct SystemdStatus {
+    /// `systemctl is-active` 的输出（如 "active" / "inactive" / "failed"）。
+    pub active: String,
+    /// `systemctl is-enabled` 的输出（如 "enabled" / "disabled" / "static"）。
+    pub enabled: String,
+    /// systemctl 是否可用。不可用时上面两个字段为占位值。
+    pub systemctl_available: bool,
+}
+
+/// 查询 systemd 服务的 active / enabled 状态。
+///
+/// 不要求 root；`systemctl is-active` 任何用户都能查。
+/// 即使服务不存在 systemctl 也会返回非零退出码 + "inactive"/"unknown" 文本，
+/// 这里捕获 stdout 文本而不把非零退出码当错误。
+pub fn query_service(service_name: &str) -> SystemdStatus {
+    let unit = format!("{}.service", service_name);
+
+    let probe = |subcmd: &str| -> Option<String> {
+        let out = Command::new("systemctl").args([subcmd, &unit]).output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if text.is_empty() {
+            // is-enabled 对不存在的服务可能把信息写到 stderr
+            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            if err.is_empty() {
+                Some("unknown".to_string())
+            } else {
+                Some(err)
+            }
+        } else {
+            Some(text)
+        }
+    };
+
+    let active = probe("is-active");
+    let enabled = probe("is-enabled");
+
+    match (active, enabled) {
+        (Some(a), Some(e)) => SystemdStatus {
+            active: a,
+            enabled: e,
+            systemctl_available: true,
+        },
+        _ => SystemdStatus {
+            active: "unknown".to_string(),
+            enabled: "unknown".to_string(),
+            systemctl_available: false,
+        },
+    }
+}
+
 fn unit_path(service_name: &str) -> PathBuf {
     Path::new(UNIT_DIR).join(format!("{}.service", service_name))
 }
