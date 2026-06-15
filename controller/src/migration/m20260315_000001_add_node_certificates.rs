@@ -60,6 +60,9 @@ impl MigrationTrait for Migration {
 
 #[derive(DeriveIden)]
 enum NodeCertificate {
+    // entity 的 table_name = "node_certificates"（复数），这里必须显式对齐，
+    // 否则 DeriveIden 会生成单数 "node_certificate"，导致迁移建的表与运行时查询的表名不一致。
+    #[sea_orm(iden = "node_certificates")]
     Table,
     Id,
     NodeId,
