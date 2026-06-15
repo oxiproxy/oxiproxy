@@ -193,7 +193,7 @@ bun run lint
 
 ### Node (node/src/)
 
-- `main.rs` - 启动入口，CLI 子命令解析（clap）：`start`、`daemon`、`stop`、`update`
+- `main.rs` - 启动入口，CLI 子命令解析（clap）：`start`、`daemon`、`stop`、`status`、`update`
 - `server/` - 节点服务器实现
   - `proxy_server.rs` - QUIC/KCP/TCP 代理服务器（含连接失败退避和日志抑制）
   - `grpc_client.rs` - 连接到 Controller 的 gRPC 客户端（自动重连）
@@ -208,7 +208,7 @@ bun run lint
 
 ### Client (client/src/)
 
-- `main.rs` - 启动入口，CLI 子命令：`start`、`daemon`、`stop`、`update`。Windows 额外支持 `install-service` / `uninstall-service`
+- `main.rs` - 启动入口，CLI 子命令：`start`、`daemon`、`stop`、`status`、`update`。Windows 额外支持 `install-service` / `uninstall-service`
 - `client/` - 客户端实现
   - `grpc_client.rs` - 连接到 Controller，接收 ProxyListUpdate（含证书指纹）
   - `connection_manager.rs` - 隧道连接协调（desired vs actual 状态协调，证书指纹验证）

@@ -91,6 +91,24 @@ enum Command {
     /// 重置 admin 管理员密码
     Passwd,
 
+    /// 查询守护进程运行状态
+    Status {
+        /// PID 文件路径
+        #[cfg(unix)]
+        #[arg(long, default_value = "/var/run/oxiproxy-controller.pid")]
+        pid_file: String,
+
+        /// PID 文件路径
+        #[cfg(windows)]
+        #[arg(long, default_value = "oxiproxy-controller.pid")]
+        pid_file: String,
+
+        /// systemd 服务名（仅 Linux）
+        #[cfg(target_os = "linux")]
+        #[arg(long, default_value = "oxiproxy-controller")]
+        service_name: String,
+    },
+
     /// 安装为 systemd 服务（开机自启，仅 Linux）
     #[cfg(target_os = "linux")]
     Install {
@@ -192,6 +210,21 @@ fn main() -> Result<()> {
         }
 
         #[cfg(target_os = "linux")]
+        Command::Status {
+            pid_file,
+            service_name,
+        } => {
+            let code = print_status(&pid_file, &service_name);
+            std::process::exit(code);
+        }
+
+        #[cfg(all(unix, not(target_os = "linux")))]
+        Command::Status { pid_file } => {
+            let code = print_status(&pid_file);
+            std::process::exit(code);
+        }
+
+        #[cfg(target_os = "linux")]
         Command::Install {
             service_name,
             user,
@@ -261,6 +294,100 @@ fn stop_daemon_unix(pid_file: &str) -> Result<()> {
     Ok(())
 }
 
+/// 打印守护进程状态并返回退出码（0=运行中/active，1=未运行）。
+fn print_status(pid_file: &str, #[cfg(target_os = "linux")] service_name: &str) -> i32 {
+    use common::process_status::{probe_pid_file, PidFileStatus};
+
+    let mut healthy = false;
+
+    println!("守护进程 (PID 文件):");
+    println!("  PID 文件:   {}", pid_file);
+    match probe_pid_file(pid_file) {
+        PidFileStatus::NoFile => {
+            println!("  状态:       未运行 (无 PID 文件)");
+        }
+        PidFileStatus::Invalid(msg) => {
+            println!("  状态:       异常 ({})", msg);
+        }
+        PidFileStatus::Stale(pid) => {
+            println!("  状态:       已停止 (PID 文件残留: {})", pid);
+        }
+        PidFileStatus::Running(d) => {
+            healthy = true;
+            println!("  状态:       运行中 (PID: {})", d.pid);
+            match d.uptime_secs {
+                Some(s) => println!("  运行时长:   {}", format_uptime(s)),
+                None => println!("  运行时长:   不可用"),
+            }
+            match d.rss_bytes {
+                Some(b) => println!("  内存占用:   {}", format_bytes(b)),
+                None => println!("  内存占用:   不可用"),
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let s = common::systemd::query_service(service_name);
+        println!();
+        println!("systemd 服务 ({}):", service_name);
+        if s.systemctl_available {
+            println!("  active:     {}", s.active);
+            println!("  enabled:    {}", s.enabled);
+            if s.active == "active" {
+                healthy = true;
+            }
+        } else {
+            println!("  systemctl 不可用，跳过");
+        }
+    }
+
+    if healthy {
+        0
+    } else {
+        1
+    }
+}
+
+/// 把秒数格式化为中文单位的运行时长。
+fn format_uptime(mut secs: u64) -> String {
+    let days = secs / 86400;
+    secs %= 86400;
+    let hours = secs / 3600;
+    secs %= 3600;
+    let mins = secs / 60;
+    secs %= 60;
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!("{}天", days));
+    }
+    if hours > 0 {
+        parts.push(format!("{}小时", hours));
+    }
+    if mins > 0 {
+        parts.push(format!("{}分钟", mins));
+    }
+    parts.push(format!("{}秒", secs));
+    parts.join("")
+}
+
+/// 把字节数格式化为人类可读单位。
+fn format_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let b = bytes as f64;
+    if b >= GB {
+        format!("{:.2} GB", b / GB)
+    } else if b >= MB {
+        format!("{:.2} MB", b / MB)
+    } else if b >= KB {
+        format!("{:.2} KB", b / KB)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
 // ─── Windows 入口 ────────────────────────────────────────
 
 #[cfg(windows)]
@@ -285,6 +412,11 @@ fn main() -> Result<()> {
         Command::Passwd => {
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(reset_admin_password())
+        }
+
+        Command::Status { pid_file } => {
+            let code = print_status(&pid_file);
+            std::process::exit(code);
         }
     }
 }
