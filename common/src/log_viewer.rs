@@ -35,6 +35,14 @@ fn locate_latest(log_dir: &Path, prefix: &str) -> Option<PathBuf> {
     }
 }
 
+/// 读取文件并返回末尾 `n` 行（不含换行符）。文件不足 `n` 行则返回全部。
+fn read_tail_lines(path: &Path, n: usize) -> std::io::Result<Vec<String>> {
+    let content = fs::read_to_string(path)?;
+    let lines: Vec<&str> = content.lines().collect();
+    let start = lines.len().saturating_sub(n);
+    Ok(lines[start..].iter().map(|s| s.to_string()).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,6 +79,23 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         assert!(locate_latest(&dir, "controller.log").is_none());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn tail_returns_last_n_lines() {
+        let dir = std::env::temp_dir().join(format!("oxi_log_test_tail_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("x.log");
+        fs::write(&f, b"l1\nl2\nl3\nl4\nl5\n").unwrap();
+
+        assert_eq!(read_tail_lines(&f, 2).unwrap(), vec!["l4".to_string(), "l5".to_string()]);
+        assert_eq!(
+            read_tail_lines(&f, 10).unwrap(),
+            vec!["l1", "l2", "l3", "l4", "l5"]
+                .into_iter().map(String::from).collect::<Vec<_>>()
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 }
