@@ -162,6 +162,10 @@ enum Command {
         /// 工作目录（默认当前目录）
         #[arg(long)]
         working_dir: Option<String>,
+
+        /// 已有 daemon 的 PID 文件路径（安装前会自动停止并清理该 daemon）
+        #[arg(long, default_value = "/var/run/oxiproxy-node.pid")]
+        pid_file: String,
     },
 
     /// 卸载 systemd 服务（仅 Linux）
@@ -275,7 +279,10 @@ fn main() -> anyhow::Result<()> {
             service_name,
             user,
             working_dir,
+            pid_file,
         } => {
+            // install 优先级高于 daemon：先停掉并清理可能在跑的 daemon，避免两个实例并存。
+            stop_daemon_if_running(&pid_file);
             install_systemd_service(
                 controller_url,
                 token,
@@ -395,7 +402,23 @@ fn stop_daemon_unix(pid_file: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 打印守护进程状态并返回退出码（0=运行中/active，1=未运行）。
+/// 安装 systemd 服务前的 best-effort 清理：若 PID 文件存在则停止旧 daemon。
+///
+/// install 优先级高于 daemon，因此这里任何失败都只告警、不中断安装，
+/// 避免残留的 daemon PID 文件挡住 systemd 服务安装。
+#[cfg(target_os = "linux")]
+fn stop_daemon_if_running(pid_file: &str) {
+    if !std::path::Path::new(pid_file).exists() {
+        println!("ℹ️  未发现运行中的 daemon（{}），跳过", pid_file);
+        return;
+    }
+    println!("🛑 检测到已有 daemon，安装前先停止：{}", pid_file);
+    if let Err(e) = stop_daemon_unix(pid_file) {
+        eprintln!("⚠️  停止旧 daemon 失败（继续安装）：{}", e);
+        // 尽力清理 PID 文件，避免后续状态查询误判
+        fs::remove_file(pid_file).ok();
+    }
+}
 fn print_status(pid_file: &str, #[cfg(target_os = "linux")] service_name: &str) -> i32 {
     use common::process_status::{probe_pid_file, PidFileStatus};
 
