@@ -4,7 +4,9 @@
 //! （`controller.log` / `node.log` / `client.log`）。
 
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// 在 `log_dir` 中定位匹配 `{prefix}.*` 的最新按天日志文件。
 ///
@@ -41,6 +43,77 @@ fn read_tail_lines(path: &Path, n: usize) -> std::io::Result<Vec<String>> {
     let lines: Vec<&str> = content.lines().collect();
     let start = lines.len().saturating_sub(n);
     Ok(lines[start..].iter().map(|s| s.to_string()).collect())
+}
+
+/// 查看日志：定位 `log_dir` 中匹配 `{prefix}.*` 的最新按天文件，
+/// 打印末尾 `lines` 行；`follow=true` 时持续跟随新追加内容，
+/// 跨天滚动自动切换到新文件，直到进程被终止（Ctrl-C）。
+///
+/// 返回进程退出码：0 成功；非 0 表示未找到日志或读取失败。
+pub fn run(log_dir: &str, prefix: &str, lines: usize, follow: bool) -> i32 {
+    let dir = Path::new(log_dir);
+
+    let mut current = match locate_latest(dir, prefix) {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "未找到日志文件（前缀 {}）于目录 {}。\n\
+                 可能未以 daemon 模式运行，或日志目录不对（前台 start 模式日志只输出到终端）。",
+                prefix, log_dir
+            );
+            return 1;
+        }
+    };
+
+    match read_tail_lines(&current, lines) {
+        Ok(tail) => {
+            for line in &tail {
+                println!("{}", line);
+            }
+        }
+        Err(e) => {
+            eprintln!("读取日志失败 {}: {}", current.display(), e);
+            return 1;
+        }
+    }
+
+    if !follow {
+        return 0;
+    }
+
+    let mut offset = fs::metadata(&current).map(|m| m.len()).unwrap_or(0);
+    loop {
+        std::thread::sleep(Duration::from_millis(500));
+
+        if let Some(latest) = locate_latest(dir, prefix) {
+            if latest != current {
+                current = latest;
+                offset = 0;
+            }
+        }
+
+        let mut file = match fs::File::open(&current) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        let len = match file.metadata() {
+            Ok(m) => m.len(),
+            Err(_) => continue,
+        };
+        if len < offset {
+            offset = 0;
+        }
+        if len > offset {
+            if file.seek(SeekFrom::Start(offset)).is_err() {
+                continue;
+            }
+            let mut buf = String::new();
+            if file.read_to_string(&mut buf).is_ok() {
+                print!("{}", buf);
+                offset = len;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
