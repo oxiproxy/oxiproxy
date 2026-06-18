@@ -9,6 +9,7 @@ pub mod utils;
 pub mod protocol;
 pub mod grpc;
 pub mod process_status;
+pub mod log_viewer;
 
 #[cfg(target_os = "linux")]
 pub mod systemd;
