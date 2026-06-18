@@ -141,6 +141,21 @@ enum Command {
         service_name: String,
     },
 
+    /// 查看本地日志（仅 daemon 模式落盘的日志；前台 start 模式日志只在终端）
+    Log {
+        /// 日志目录路径
+        #[arg(long, default_value = "./logs")]
+        log_dir: String,
+
+        /// 打印末尾行数
+        #[arg(short = 'n', long, default_value_t = 200)]
+        lines: usize,
+
+        /// 实时跟随（类似 tail -f），Ctrl-C 退出
+        #[arg(short = 'f', long)]
+        follow: bool,
+    },
+
     /// 安装为 systemd 服务（开机自启，仅 Linux）
     #[cfg(target_os = "linux")]
     Install {
@@ -307,6 +322,11 @@ fn main() -> anyhow::Result<()> {
         #[cfg(all(unix, not(target_os = "linux")))]
         Command::Status { pid_file } => {
             let code = print_status(&pid_file);
+            std::process::exit(code);
+        }
+
+        Command::Log { log_dir, lines, follow } => {
+            let code = common::log_viewer::run(&log_dir, "client.log", lines, follow);
             std::process::exit(code);
         }
     }
@@ -533,6 +553,11 @@ fn main() -> anyhow::Result<()> {
 
         Command::Status { pid_file } => {
             let code = print_status(&pid_file);
+            std::process::exit(code);
+        }
+
+        Command::Log { log_dir, lines, follow } => {
+            let code = common::log_viewer::run(&log_dir, "client.log", lines, follow);
             std::process::exit(code);
         }
     }
