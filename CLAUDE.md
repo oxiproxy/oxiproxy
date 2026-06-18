@@ -125,6 +125,11 @@ cargo run --release -p node -- start --controller-url http://localhost:3100 --to
 # 运行 Client（客户端）
 cargo run --release -p client -- start --controller-url http://localhost:3100 --token <token>
 
+# 查看本地日志（仅 daemon 模式落盘的日志，末尾 200 行；前台 start 模式日志只在终端）
+cargo run --release -p controller -- log
+cargo run --release -p node -- log -n 500
+cargo run --release -p client -- log -f   # 实时跟随（Ctrl-C 退出）
+
 # 运行所有测试
 cargo test
 
@@ -193,7 +198,7 @@ bun run lint
 
 ### Node (node/src/)
 
-- `main.rs` - 启动入口，CLI 子命令解析（clap）：`start`、`daemon`、`stop`、`status`、`update`
+- `main.rs` - 启动入口，CLI 子命令解析（clap）：`start`、`daemon`、`stop`、`status`、`log`、`update`
 - `server/` - 节点服务器实现
   - `proxy_server.rs` - QUIC/KCP/TCP 代理服务器（含连接失败退避和日志抑制）
   - `grpc_client.rs` - 连接到 Controller 的 gRPC 客户端（自动重连）
@@ -208,7 +213,7 @@ bun run lint
 
 ### Client (client/src/)
 
-- `main.rs` - 启动入口，CLI 子命令：`start`、`daemon`、`stop`、`status`、`update`。Windows 额外支持 `install-service` / `uninstall-service`
+- `main.rs` - 启动入口，CLI 子命令：`start`、`daemon`、`stop`、`status`、`log`、`update`。Windows 额外支持 `install-service` / `uninstall-service`
 - `client/` - 客户端实现
   - `grpc_client.rs` - 连接到 Controller，接收 ProxyListUpdate（含证书指纹）
   - `connection_manager.rs` - 隧道连接协调（desired vs actual 状态协调，证书指纹验证）
