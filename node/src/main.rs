@@ -19,13 +19,14 @@ struct Cli {
 enum Command {
     /// 前台运行节点服务器
     Start {
-        /// Controller gRPC 地址（例如 http://controller:3100）
+        /// Controller gRPC 地址（例如 http://controller:3100）。
+        /// 若已安装同名 systemd 服务则忽略，转为 systemctl start。
         #[arg(long)]
-        controller_url: String,
+        controller_url: Option<String>,
 
-        /// 节点密钥
+        /// 节点密钥。若已安装同名 systemd 服务则忽略。
         #[arg(long)]
-        token: String,
+        token: Option<String>,
 
         /// 隧道协议：quic 或 kcp（默认 quic）
         #[arg(long, default_value = "quic")]
@@ -38,6 +39,11 @@ enum Command {
         /// 日志目录路径（按天自动分割，不指定则输出到控制台）
         #[arg(long)]
         log_dir: Option<String>,
+
+        /// systemd 服务名（仅 Linux）：若该服务已安装则 start 转为 systemctl start
+        #[cfg(target_os = "linux")]
+        #[arg(long, default_value = "oxiproxy-node")]
+        service_name: String,
     },
 
     /// 停止运行中的守护进程
@@ -51,6 +57,11 @@ enum Command {
         #[cfg(windows)]
         #[arg(long, default_value = "oxiproxy-node.pid")]
         pid_file: String,
+
+        /// systemd 服务名（仅 Linux）：若该服务已安装则 stop 转为 systemctl stop
+        #[cfg(target_os = "linux")]
+        #[arg(long, default_value = "oxiproxy-node")]
+        service_name: String,
     },
 
     /// 以守护进程模式运行
@@ -212,7 +223,26 @@ fn main() -> anyhow::Result<()> {
             protocol,
             tls_ca_cert,
             log_dir,
+            #[cfg(target_os = "linux")]
+            service_name,
         } => {
+            // 已安装同名 systemd 服务时，start 转为 systemctl start
+            #[cfg(target_os = "linux")]
+            if common::systemd::is_installed(&service_name) {
+                println!(
+                    "ℹ️  检测到已安装 systemd 服务 {}，转为 systemctl start",
+                    service_name
+                );
+                common::systemd::start_service(&service_name)?;
+                return Ok(());
+            }
+            // 前台运行：需要 controller_url 和 token
+            let controller_url = controller_url.ok_or_else(|| {
+                anyhow::anyhow!("未安装 systemd 服务，前台启动需 --controller-url 和 --token")
+            })?;
+            let token = token.ok_or_else(|| {
+                anyhow::anyhow!("未安装 systemd 服务，前台启动需 --controller-url 和 --token")
+            })?;
             let ca_cert = load_tls_ca_cert(&tls_ca_cert)?;
             if let Some(ref dir) = log_dir {
                 fs::create_dir_all(dir).expect("无法创建日志目录");
@@ -221,7 +251,21 @@ fn main() -> anyhow::Result<()> {
             runtime.block_on(run_node(controller_url, token, protocol, ca_cert, log_dir))?;
         }
 
-        Command::Stop { pid_file } => {
+        Command::Stop {
+            pid_file,
+            #[cfg(target_os = "linux")]
+            service_name,
+        } => {
+            // 已安装同名 systemd 服务时，stop 转为 systemctl stop
+            #[cfg(target_os = "linux")]
+            if common::systemd::is_installed(&service_name) {
+                println!(
+                    "ℹ️  检测到已安装 systemd 服务 {}，转为 systemctl stop",
+                    service_name
+                );
+                common::systemd::stop_service(&service_name)?;
+                return Ok(());
+            }
             stop_daemon_unix(&pid_file)?;
         }
 
@@ -530,6 +574,10 @@ fn main() -> anyhow::Result<()> {
             tls_ca_cert,
             log_dir,
         } => {
+            let controller_url = controller_url
+                .ok_or_else(|| anyhow::anyhow!("前台启动需 --controller-url 和 --token"))?;
+            let token = token
+                .ok_or_else(|| anyhow::anyhow!("前台启动需 --controller-url 和 --token"))?;
             let ca_cert = load_tls_ca_cert(&tls_ca_cert)?;
             if let Some(ref dir) = log_dir {
                 fs::create_dir_all(dir).expect("无法创建日志目录");

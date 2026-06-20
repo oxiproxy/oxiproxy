@@ -145,6 +145,30 @@ fn unit_path(service_name: &str) -> PathBuf {
     Path::new(UNIT_DIR).join(format!("{}.service", service_name))
 }
 
+/// 判断指定服务是否已通过 `install_service` 安装（unit 文件是否存在）。
+///
+/// 以 `/etc/systemd/system/<name>.service` 文件是否存在为准——
+/// 这与 install/uninstall 写入/删除的路径完全对应，不依赖 systemctl 是否可用。
+pub fn is_installed(service_name: &str) -> bool {
+    unit_path(service_name).exists()
+}
+
+/// `systemctl start <service>`，启动已安装的服务。
+pub fn start_service(service_name: &str) -> Result<()> {
+    ensure_systemctl()?;
+    run_systemctl(&["start", &format!("{}.service", service_name)])?;
+    println!("🚀 已启动 systemd 服务: {}", service_name);
+    Ok(())
+}
+
+/// `systemctl stop <service>`，停止已安装的服务。
+pub fn stop_service(service_name: &str) -> Result<()> {
+    ensure_systemctl()?;
+    run_systemctl(&["stop", &format!("{}.service", service_name)])?;
+    println!("🛑 已停止 systemd 服务: {}", service_name);
+    Ok(())
+}
+
 fn ensure_root() -> Result<()> {
     let euid = unsafe { libc::geteuid() };
     if euid != 0 {
