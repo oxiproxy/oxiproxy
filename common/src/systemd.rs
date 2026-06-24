@@ -46,6 +46,14 @@ pub fn install_service(config: &SystemdServiceConfig) -> Result<()> {
         .map_err(|e| anyhow!("写入 unit 文件 {} 失败: {}", unit_path.display(), e))?;
     println!("✅ 已写入 unit 文件: {}", unit_path.display());
 
+    // 预创建日志目录：systemd 的 append: 会创建文件，但不会创建父目录。
+    let log_path = log_file_path(config);
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| anyhow!("无法创建日志目录 {}: {}", parent.display(), e))?;
+    }
+    println!("📝 日志将持久化写入: {}", log_path.display());
+
     run_systemctl(&["daemon-reload"])?;
     // 已存在则先停止，避免旧实例继续占用资源
     let _ = run_systemctl(&["stop", &format!("{}.service", config.service_name)]);
@@ -56,7 +64,7 @@ pub fn install_service(config: &SystemdServiceConfig) -> Result<()> {
     println!();
     println!("常用命令：");
     println!("  查看状态:  systemctl status {}", config.service_name);
-    println!("  查看日志:  journalctl -u {} -f", config.service_name);
+    println!("  查看日志:  tail -f {}", log_path.display());
     println!("  停止服务:  systemctl stop {}", config.service_name);
     println!("  禁用自启:  systemctl disable {}", config.service_name);
 
@@ -145,6 +153,17 @@ fn unit_path(service_name: &str) -> PathBuf {
     Path::new(UNIT_DIR).join(format!("{}.service", service_name))
 }
 
+/// systemd 服务日志文件路径：`<working_dir>/log/<service_name>.log`
+///
+/// 服务以 `StandardOutput=append:` 直接把 stdout/stderr 持久化写入此文件，
+/// 不依赖 journald 是否开启持久化。`install_service` 负责预创建其父目录。
+fn log_file_path(config: &SystemdServiceConfig) -> PathBuf {
+    config
+        .working_dir
+        .join("log")
+        .join(format!("{}.log", config.service_name))
+}
+
 /// 判断指定服务是否已通过 `install_service` 安装（unit 文件是否存在）。
 ///
 /// 以 `/etc/systemd/system/<name>.service` 文件是否存在为准——
@@ -217,6 +236,9 @@ fn render_unit(config: &SystemdServiceConfig) -> String {
         Some(u) => format!("User={}\n", u),
         None => String::new(),
     };
+    // stdout/stderr 持久化追加写入工作目录下的 log/<service>.log，
+    // append: 需 systemd ≥ 240；不截断、重启不丢，独立于 journald 持久化配置。
+    let log_path = log_file_path(config);
 
     format!(
         "[Unit]\n\
@@ -231,8 +253,8 @@ WorkingDirectory={working_dir}\n\
 {user_line}Restart=on-failure\n\
 RestartSec=5s\n\
 LimitNOFILE=65536\n\
-StandardOutput=journal\n\
-StandardError=journal\n\
+StandardOutput=append:{log_path}\n\
+StandardError=append:{log_path}\n\
 \n\
 [Install]\n\
 WantedBy=multi-user.target\n",
@@ -240,6 +262,7 @@ WantedBy=multi-user.target\n",
         exec_start = exec_start,
         working_dir = config.working_dir.display(),
         user_line = user_line,
+        log_path = log_path.display(),
     )
 }
 
@@ -307,5 +330,9 @@ mod tests {
         assert!(unit.contains("User=root"));
         assert!(unit.contains("WorkingDirectory=/var/lib/oxiproxy"));
         assert!(unit.contains("ExecStart=/usr/local/bin/node start --token \"secret token\""));
+        assert!(unit
+            .contains("StandardOutput=append:/var/lib/oxiproxy/log/oxiproxy-node.log"));
+        assert!(unit
+            .contains("StandardError=append:/var/lib/oxiproxy/log/oxiproxy-node.log"));
     }
 }

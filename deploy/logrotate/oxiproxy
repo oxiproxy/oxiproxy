@@ -1,0 +1,37 @@
+# OxiProxy 日志轮转配置
+#
+# 适用于以 systemd 服务运行（StandardOutput=append:<working_dir>/log/<service>.log）的
+# Node / Client / Controller。默认工作目录为 /opt/oxiproxy，如安装在别处请改下面的路径。
+#
+# 安装：
+#   sudo cp deploy/logrotate/oxiproxy /etc/logrotate.d/oxiproxy
+#   sudo chmod 644 /etc/logrotate.d/oxiproxy
+#   sudo logrotate --debug /etc/logrotate.d/oxiproxy   # 仅检查，不实际轮转
+#   sudo logrotate --force /etc/logrotate.d/oxiproxy   # 立即强制轮转一次（验证）
+#
+# logrotate 由系统 cron（/etc/cron.daily/logrotate 或 logrotate.timer）每天调用，
+# 每次运行都会按 size 判断是否需要轮转，因此无需另设定时任务。
+
+/opt/oxiproxy/log/*.log {
+    # 单文件超过 50M 即轮转（每天 cron 调用时检查大小）
+    size 50M
+
+    # 保留 7 份历史，更早的删除
+    rotate 7
+
+    # gzip 压缩旧日志
+    compress
+    # 延后一个周期再压缩：配合 copytruncate，避免压缩正在被拷贝/写入的文件
+    delaycompress
+
+    # 文件不存在不报错；空文件不轮转
+    missingok
+    notifempty
+
+    # 关键：systemd 的 append: 会一直持有文件 fd，rename 会导致进程继续写旧 inode。
+    # copytruncate 原地拷贝后截断，fd 不变、无需重启服务即可继续写入。
+    copytruncate
+
+    # 以 root 身份执行轮转（如服务以非 root 用户运行，改成对应 su <user> <group>）
+    su root root
+}
