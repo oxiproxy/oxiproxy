@@ -46,6 +46,33 @@ enum Command {
         service_name: String,
     },
 
+    /// 内部服务入口（隐藏）：由 systemd unit 的 ExecStart 调用，直接前台运行，
+    /// 不做任何 systemctl 转发——避免与 `start` 的"已装则转 systemctl"逻辑形成自我递归。
+    /// 用户不应直接使用，请用 `start` 或 systemctl。
+    #[cfg(target_os = "linux")]
+    #[command(hide = true)]
+    Run {
+        /// Controller gRPC 地址
+        #[arg(long)]
+        controller_url: String,
+
+        /// 节点密钥
+        #[arg(long)]
+        token: String,
+
+        /// 隧道协议：quic 或 kcp（默认 quic）
+        #[arg(long, default_value = "quic")]
+        protocol: String,
+
+        /// 自定义 CA 证书文件路径（PEM 格式，用于验证 Controller 的 TLS 证书）
+        #[arg(long)]
+        tls_ca_cert: Option<String>,
+
+        /// 日志目录路径（按天自动分割，不指定则输出到控制台/journald）
+        #[arg(long)]
+        log_dir: Option<String>,
+    },
+
     /// 停止运行中的守护进程
     Stop {
         /// PID 文件路径
@@ -204,6 +231,24 @@ async fn run_node(controller_url: String, token: String, protocol: String, tls_c
     server::run_server_controller_mode(controller_url, token, protocol, tls_ca_cert, log_dir).await
 }
 
+/// 前台运行节点（共享给 `start` 的前台分支与隐藏的 `run` 服务入口）。
+#[cfg(unix)]
+fn run_node_foreground(
+    controller_url: String,
+    token: String,
+    protocol: String,
+    tls_ca_cert: Option<String>,
+    log_dir: Option<String>,
+) -> anyhow::Result<()> {
+    let ca_cert = load_tls_ca_cert(&tls_ca_cert)?;
+    if let Some(ref dir) = log_dir {
+        fs::create_dir_all(dir).expect("无法创建日志目录");
+    }
+    let runtime = tokio::runtime::Runtime::new()?;
+    runtime.block_on(run_node(controller_url, token, protocol, ca_cert, log_dir))?;
+    Ok(())
+}
+
 // ─── Unix 入口 ───────────────────────────────────────────
 // 注意：不使用 #[tokio::main]，因为 daemon 模式需要在 fork 之后才创建 tokio runtime。
 // 在 fork 之前创建的 runtime（epoll fd、worker 线程）会在 fork 后损坏，导致网络连接失败。
@@ -243,12 +288,19 @@ fn main() -> anyhow::Result<()> {
             let token = token.ok_or_else(|| {
                 anyhow::anyhow!("未安装 systemd 服务，前台启动需 --controller-url 和 --token")
             })?;
-            let ca_cert = load_tls_ca_cert(&tls_ca_cert)?;
-            if let Some(ref dir) = log_dir {
-                fs::create_dir_all(dir).expect("无法创建日志目录");
-            }
-            let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(run_node(controller_url, token, protocol, ca_cert, log_dir))?;
+            run_node_foreground(controller_url, token, protocol, tls_ca_cert, log_dir)?;
+        }
+
+        // 隐藏的服务入口：systemd ExecStart 调用，直接前台运行，不转发。
+        #[cfg(target_os = "linux")]
+        Command::Run {
+            controller_url,
+            token,
+            protocol,
+            tls_ca_cert,
+            log_dir,
+        } => {
+            run_node_foreground(controller_url, token, protocol, tls_ca_cert, log_dir)?;
         }
 
         Command::Stop {
@@ -390,8 +442,10 @@ fn install_systemd_service(
         None => std::env::current_dir()?,
     };
 
+    // ExecStart 用隐藏的 `run` 子命令，而非用户面向的 `start`：
+    // `start` 在检测到已装服务时会转发回 systemctl，systemd 拉起 ExecStart 时会自我递归而立即退出。
     let mut args = vec![
-        "start".to_string(),
+        "run".to_string(),
         "--controller-url".to_string(),
         controller_url,
         "--token".to_string(),
