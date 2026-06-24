@@ -1,0 +1,11 @@
+# OxiProxy dated 日志归档定时任务
+# 每天 03:10 运行：压缩非今天的 dated 日志、删除超期归档。
+# 安装：sudo cp deploy/cron.d/oxiproxy-log-archive /etc/cron.d/oxiproxy-log-archive
+#
+# 可用环境变量覆盖默认：
+#   OXIPROXY_LOG_DIR        日志目录（默认 /opt/oxiproxy/log）
+#   OXIPROXY_LOG_KEEP_DAYS  归档保留天数（默认 14）
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+10 3 * * * root /usr/local/bin/oxiproxy-log-archive >/dev/null 2>&1
