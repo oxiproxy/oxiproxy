@@ -81,15 +81,56 @@ pub fn run(log_dir: &str, prefix: &str, lines: usize, follow: bool) -> i32 {
         return 0;
     }
 
+    follow_appends(&mut current, |cur| {
+        locate_latest(dir, prefix).filter(|latest| latest != cur)
+    })
+}
+
+/// 查看指定的单个日志文件（systemd `StandardOutput=append:` 落盘的日志）：
+/// 打印末尾 `lines` 行；`follow=true` 时持续跟随新追加内容。
+/// 文件被 logrotate copytruncate 截断后自动从头继续。
+///
+/// 返回进程退出码：0 成功；非 0 表示文件不存在或读取失败。
+pub fn run_file(path: &Path, lines: usize, follow: bool) -> i32 {
+    if !path.is_file() {
+        eprintln!(
+            "日志文件不存在: {}。\n服务可能尚未产生日志，或已被清理。",
+            path.display()
+        );
+        return 1;
+    }
+
+    match read_tail_lines(path, lines) {
+        Ok(tail) => {
+            for line in &tail {
+                println!("{}", line);
+            }
+        }
+        Err(e) => {
+            eprintln!("读取日志失败 {}: {}", path.display(), e);
+            return 1;
+        }
+    }
+
+    if !follow {
+        return 0;
+    }
+
+    let mut current = path.to_path_buf();
+    follow_appends(&mut current, |_| None)
+}
+
+/// 跟随 `current` 的追加内容持续输出；每轮先用 `relocate` 询问是否切换到
+/// 新文件（按天滚动场景），返回 `Some` 则从头读新文件。文件长度变小
+/// （copytruncate 截断）时偏移量归零。仅被 Ctrl-C 终止，形式上返回 i32。
+fn follow_appends(current: &mut PathBuf, relocate: impl Fn(&Path) -> Option<PathBuf>) -> i32 {
     let mut offset = fs::metadata(&current).map(|m| m.len()).unwrap_or(0);
     loop {
         std::thread::sleep(Duration::from_millis(500));
 
-        if let Some(latest) = locate_latest(dir, prefix) {
-            if latest != current {
-                current = latest;
-                offset = 0;
-            }
+        if let Some(latest) = relocate(current) {
+            *current = latest;
+            offset = 0;
         }
 
         let mut file = match fs::File::open(&current) {
@@ -121,6 +162,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn run_file_prints_tail_and_reports_missing() {
+        let dir = std::env::temp_dir().join(format!("oxi_log_test_runfile_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("svc.log");
+        fs::write(&f, b"a\nb\nc\n").unwrap();
+
+        assert_eq!(run_file(&f, 2, false), 0);
+        assert_eq!(run_file(&dir.join("missing.log"), 2, false), 1);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn picks_latest_dated_file() {
         let dir = std::env::temp_dir().join(format!("oxi_log_test_latest_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -130,13 +184,17 @@ mod tests {
         fs::write(dir.join("node.log.2026-06-16"), b"mid\n").unwrap();
 
         let got = locate_latest(&dir, "node.log").unwrap();
-        assert_eq!(got.file_name().unwrap().to_string_lossy(), "node.log.2026-06-17");
+        assert_eq!(
+            got.file_name().unwrap().to_string_lossy(),
+            "node.log.2026-06-17"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn falls_back_to_undated_file() {
-        let dir = std::env::temp_dir().join(format!("oxi_log_test_fallback_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("oxi_log_test_fallback_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("client.log"), b"data\n").unwrap();
@@ -163,11 +221,16 @@ mod tests {
         let f = dir.join("x.log");
         fs::write(&f, b"l1\nl2\nl3\nl4\nl5\n").unwrap();
 
-        assert_eq!(read_tail_lines(&f, 2).unwrap(), vec!["l4".to_string(), "l5".to_string()]);
+        assert_eq!(
+            read_tail_lines(&f, 2).unwrap(),
+            vec!["l4".to_string(), "l5".to_string()]
+        );
         assert_eq!(
             read_tail_lines(&f, 10).unwrap(),
             vec!["l1", "l2", "l3", "l4", "l5"]
-                .into_iter().map(String::from).collect::<Vec<_>>()
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
         );
         fs::remove_dir_all(&dir).unwrap();
     }

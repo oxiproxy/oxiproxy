@@ -57,7 +57,11 @@ pub fn install_service(config: &SystemdServiceConfig) -> Result<()> {
     run_systemctl(&["daemon-reload"])?;
     // 已存在则先停止，避免旧实例继续占用资源
     let _ = run_systemctl(&["stop", &format!("{}.service", config.service_name)]);
-    run_systemctl(&["enable", "--now", &format!("{}.service", config.service_name)])?;
+    run_systemctl(&[
+        "enable",
+        "--now",
+        &format!("{}.service", config.service_name),
+    ])?;
 
     println!();
     println!("🚀 服务已启动并设置为开机自启: {}", config.service_name);
@@ -117,7 +121,10 @@ pub fn query_service(service_name: &str) -> SystemdStatus {
     let unit = format!("{}.service", service_name);
 
     let probe = |subcmd: &str| -> Option<String> {
-        let out = Command::new("systemctl").args([subcmd, &unit]).output().ok()?;
+        let out = Command::new("systemctl")
+            .args([subcmd, &unit])
+            .output()
+            .ok()?;
         let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if text.is_empty() {
             // is-enabled 对不存在的服务可能把信息写到 stderr
@@ -162,6 +169,26 @@ fn log_file_path(config: &SystemdServiceConfig) -> PathBuf {
         .working_dir
         .join("log")
         .join(format!("{}.log", config.service_name))
+}
+
+/// 从 unit 文件内容解析 `StandardOutput=append:<path>` 的日志文件路径。
+///
+/// 旧版本（journal 收集）的 unit 没有该行，返回 `None`。
+fn parse_unit_log_path(unit_content: &str) -> Option<PathBuf> {
+    unit_content
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix("StandardOutput=append:"))
+        .map(PathBuf::from)
+}
+
+/// 查询已安装 systemd 服务的持久化日志文件路径。
+///
+/// 读取 `/etc/systemd/system/<name>.service` 并解析 `StandardOutput=append:` 行。
+/// 服务未安装、或 unit 为旧版 journal 收集模式时返回 `None`。
+pub fn installed_log_path(service_name: &str) -> Option<PathBuf> {
+    let content = fs::read_to_string(unit_path(service_name)).ok()?;
+    parse_unit_log_path(&content)
 }
 
 /// 判断指定服务是否已通过 `install_service` 安装（unit 文件是否存在）。
@@ -300,7 +327,10 @@ mod tests {
 
     #[test]
     fn quote_arg_keeps_simple_strings() {
-        assert_eq!(quote_arg("http://controller:3100"), "http://controller:3100");
+        assert_eq!(
+            quote_arg("http://controller:3100"),
+            "http://controller:3100"
+        );
         assert_eq!(quote_arg("abc"), "abc");
         assert_eq!(quote_arg("/var/log/oxiproxy"), "/var/log/oxiproxy");
     }
@@ -311,6 +341,37 @@ mod tests {
         assert_eq!(quote_arg("a\"b"), "\"a\\\"b\"");
         assert_eq!(quote_arg("$VAR"), "\"\\$VAR\"");
         assert_eq!(quote_arg(""), "\"\"");
+    }
+
+    #[test]
+    fn parse_unit_log_path_extracts_append_target() {
+        let unit = "[Service]\nStandardOutput=append:/opt/oxiproxy/log/oxiproxy-node.log\nStandardError=append:/opt/oxiproxy/log/oxiproxy-node.log\n";
+        assert_eq!(
+            parse_unit_log_path(unit),
+            Some(PathBuf::from("/opt/oxiproxy/log/oxiproxy-node.log"))
+        );
+    }
+
+    #[test]
+    fn parse_unit_log_path_none_when_journal() {
+        let unit = "[Service]\nExecStart=/usr/local/bin/node run\n";
+        assert_eq!(parse_unit_log_path(unit), None);
+    }
+
+    #[test]
+    fn parse_unit_log_path_roundtrips_render_unit() {
+        let cfg = SystemdServiceConfig {
+            service_name: "oxiproxy-node".into(),
+            description: "OxiProxy Node".into(),
+            binary_path: PathBuf::from("/usr/local/bin/node"),
+            args: vec!["run".into()],
+            working_dir: PathBuf::from("/var/lib/oxiproxy"),
+            user: None,
+        };
+        assert_eq!(
+            parse_unit_log_path(&render_unit(&cfg)),
+            Some(PathBuf::from("/var/lib/oxiproxy/log/oxiproxy-node.log"))
+        );
     }
 
     #[test]
@@ -330,9 +391,7 @@ mod tests {
         assert!(unit.contains("User=root"));
         assert!(unit.contains("WorkingDirectory=/var/lib/oxiproxy"));
         assert!(unit.contains("ExecStart=/usr/local/bin/node start --token \"secret token\""));
-        assert!(unit
-            .contains("StandardOutput=append:/var/lib/oxiproxy/log/oxiproxy-node.log"));
-        assert!(unit
-            .contains("StandardError=append:/var/lib/oxiproxy/log/oxiproxy-node.log"));
+        assert!(unit.contains("StandardOutput=append:/var/lib/oxiproxy/log/oxiproxy-node.log"));
+        assert!(unit.contains("StandardError=append:/var/lib/oxiproxy/log/oxiproxy-node.log"));
     }
 }

@@ -175,11 +175,11 @@ enum Command {
         service_name: String,
     },
 
-    /// 查看本地日志（仅 daemon 模式落盘的日志；前台 start 模式日志只在终端）
+    /// 查看本地日志（systemd 服务或 daemon 模式落盘的日志；前台 start 模式日志只在终端）
     Log {
-        /// 日志目录路径
-        #[arg(long, default_value = "./logs")]
-        log_dir: String,
+        /// 日志目录路径（默认 ./logs；Linux 上已装 systemd 服务且不指定时，自动读取服务日志）
+        #[arg(long)]
+        log_dir: Option<String>,
 
         /// 打印末尾行数
         #[arg(short = 'n', long, default_value_t = 200)]
@@ -188,6 +188,11 @@ enum Command {
         /// 实时跟随（类似 tail -f），Ctrl-C 退出
         #[arg(short = 'f', long)]
         follow: bool,
+
+        /// systemd 服务名（仅 Linux）：该服务已安装且未指定 --log-dir 时读取其日志文件
+        #[cfg(target_os = "linux")]
+        #[arg(long, default_value = "oxiproxy-client")]
+        service_name: String,
     },
 
     /// 安装为 systemd 服务（开机自启，仅 Linux）
@@ -239,8 +244,8 @@ enum Command {
 fn load_tls_ca_cert(path: &Option<String>) -> anyhow::Result<Option<Vec<u8>>> {
     match path {
         Some(p) => {
-            let content = fs::read(p)
-                .map_err(|e| anyhow::anyhow!("读取 CA 证书文件 {} 失败: {}", p, e))?;
+            let content =
+                fs::read(p).map_err(|e| anyhow::anyhow!("读取 CA 证书文件 {} 失败: {}", p, e))?;
             Ok(Some(content))
         }
         None => Ok(None),
@@ -349,8 +354,7 @@ fn main() -> anyhow::Result<()> {
             println!("日志目录: {}", log_dir);
 
             // daemon 模式下 stdout/stderr 重定向到日志目录中的固定文件
-            let stdout =
-                File::create(format!("{}/daemon.log", log_dir)).expect("无法创建日志文件");
+            let stdout = File::create(format!("{}/daemon.log", log_dir)).expect("无法创建日志文件");
             let stderr =
                 File::create(format!("{}/daemon.err", log_dir)).expect("无法创建错误日志文件");
 
@@ -371,7 +375,12 @@ fn main() -> anyhow::Result<()> {
             // fork 完成后再创建 tokio runtime，确保 epoll fd 和线程池状态正确
             let ca_cert = load_tls_ca_cert(&tls_ca_cert)?;
             let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(client::run_client(controller_url, token, ca_cert, Some(log_dir)))?;
+            runtime.block_on(client::run_client(
+                controller_url,
+                token,
+                ca_cert,
+                Some(log_dir),
+            ))?;
         }
 
         Command::Update => {
@@ -422,7 +431,26 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(code);
         }
 
-        Command::Log { log_dir, lines, follow } => {
+        Command::Log {
+            log_dir,
+            lines,
+            follow,
+            #[cfg(target_os = "linux")]
+            service_name,
+        } => {
+            // 已装 systemd 服务且未显式指定 --log-dir 时，读取服务落盘日志
+            #[cfg(target_os = "linux")]
+            if log_dir.is_none() {
+                if let Some(path) = common::systemd::installed_log_path(&service_name) {
+                    eprintln!(
+                        "ℹ️  检测到已安装 systemd 服务 {}，读取其日志: {}",
+                        service_name,
+                        path.display()
+                    );
+                    std::process::exit(common::log_viewer::run_file(&path, lines, follow));
+                }
+            }
+            let log_dir = log_dir.unwrap_or_else(|| "./logs".to_string());
             let code = common::log_viewer::run(&log_dir, "client.log", lines, follow);
             std::process::exit(code);
         }
@@ -640,14 +668,16 @@ fn main() -> anyhow::Result<()> {
         } => {
             let controller_url = controller_url
                 .ok_or_else(|| anyhow::anyhow!("前台启动需 --controller-url 和 --token"))?;
-            let token = token
-                .ok_or_else(|| anyhow::anyhow!("前台启动需 --controller-url 和 --token"))?;
+            let token =
+                token.ok_or_else(|| anyhow::anyhow!("前台启动需 --controller-url 和 --token"))?;
             let ca_cert = load_tls_ca_cert(&tls_ca_cert)?;
             if let Some(ref dir) = log_dir {
                 fs::create_dir_all(dir).expect("无法创建日志目录");
             }
             let runtime = tokio::runtime::Runtime::new()?;
-            runtime.block_on(async { client::run_client(controller_url, token, ca_cert, log_dir).await })
+            runtime.block_on(async {
+                client::run_client(controller_url, token, ca_cert, log_dir).await
+            })
         }
 
         Command::Stop { pid_file } => stop_daemon_windows(&pid_file),
@@ -677,7 +707,12 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(code);
         }
 
-        Command::Log { log_dir, lines, follow } => {
+        Command::Log {
+            log_dir,
+            lines,
+            follow,
+        } => {
+            let log_dir = log_dir.unwrap_or_else(|| "./logs".to_string());
             let code = common::log_viewer::run(&log_dir, "client.log", lines, follow);
             std::process::exit(code);
         }
@@ -752,7 +787,9 @@ fn stop_daemon_windows(pid_file: &str) -> anyhow::Result<()> {
 
     unsafe {
         use windows_sys::Win32::Foundation::CloseHandle;
-        use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+        };
 
         let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
         if handle.is_null() {
@@ -800,7 +837,10 @@ fn update_binary() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("未找到任何 release"))?;
 
     if !self_update::version::bump_is_compatible(current_version, &latest.version)? {
-        println!("最新版本 v{} 与当前版本 v{} 不兼容", latest.version, current_version);
+        println!(
+            "最新版本 v{} 与当前版本 v{} 不兼容",
+            latest.version, current_version
+        );
         return Ok(());
     }
 

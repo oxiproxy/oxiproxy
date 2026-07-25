@@ -125,7 +125,7 @@ cargo run --release -p node -- start --controller-url http://localhost:3100 --to
 # 运行 Client（客户端）
 cargo run --release -p client -- start --controller-url http://localhost:3100 --token <token>
 
-# 查看本地日志（仅 daemon 模式落盘的日志，末尾 200 行；前台 start 模式日志只在终端）
+# 查看本地日志（末尾 200 行；Linux 已装 systemd 服务时自动读服务落盘日志，否则读 daemon 日志；前台 start 模式日志只在终端）
 cargo run --release -p controller -- log
 cargo run --release -p node -- log -n 500
 cargo run --release -p client -- log -f   # 实时跟随（Ctrl-C 退出）
