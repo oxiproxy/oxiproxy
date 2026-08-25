@@ -1,259 +1,270 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import {
+  ArrowLeftRight,
+  BarChart3,
+  CreditCard,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Monitor,
+  Network,
+  Package,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Server,
+  Settings,
+  ShieldCheck,
+  Users,
+  X,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { Separator } from './ui/separator';
+import { cn } from '../lib/utils';
 
 interface LayoutProps {
-  children: React.ReactNode;
+  children: ReactNode;
+}
+
+interface NavigationItem {
+  name: string;
+  href: string;
+  icon: LucideIcon;
+}
+
+const navigation: NavigationItem[] = [
+  { name: '仪表板', href: '/', icon: LayoutDashboard },
+  { name: '客户端', href: '/clients', icon: Monitor },
+  { name: '代理', href: '/proxies', icon: ArrowLeftRight },
+  { name: '节点', href: '/nodes', icon: Server },
+  { name: '流量统计', href: '/traffic', icon: BarChart3 },
+  { name: '我的订阅', href: '/my-subscription', icon: CreditCard },
+];
+
+const adminNavigation: NavigationItem[] = [
+  { name: '用户管理', href: '/users', icon: Users },
+  { name: '订阅套餐', href: '/subscriptions', icon: Package },
+  { name: '用户订阅', href: '/user-subscriptions', icon: CreditCard },
+  { name: '系统设置', href: '/settings', icon: Settings },
+];
+
+function isItemActive(pathname: string, href: string) {
+  return href === '/' ? pathname === '/' : pathname.startsWith(href);
+}
+
+function Brand({ collapsed = false }: { collapsed?: boolean }) {
+  return (
+    <Link to="/" className={cn('flex min-w-0 items-center gap-3', collapsed && 'justify-center')}>
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+        <Network className="size-5" aria-hidden="true" />
+      </span>
+      {!collapsed && (
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-semibold tracking-tight">OxiProxy</span>
+          <span className="block truncate text-xs text-muted-foreground">内网穿透控制台</span>
+        </span>
+      )}
+    </Link>
+  );
 }
 
 export default function Layout({ children }: LayoutProps) {
   const { user, logout, isAdmin } = useAuth();
   const location = useLocation();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-
-  const navigation = [
-    {
-      name: '仪表板',
-      href: '/',
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
-        </svg>
-      )
-    },
-    {
-      name: '客户端',
-      href: '/clients',
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25" />
-        </svg>
-      )
-    },
-    {
-      name: '代理',
-      href: '/proxies',
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
-        </svg>
-      )
-    },
-    {
-      name: '节点',
-      href: '/nodes',
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z" />
-        </svg>
-      )
-    },
-    {
-      name: '流量统计',
-      href: '/traffic',
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
-        </svg>
-      )
-    },
-    {
-      name: '我的订阅',
-      href: '/my-subscription',
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />
-        </svg>
-      )
-    },
-  ];
-
-  const adminNavigation = [
-    {
-      name: '用户管理',
-      href: '/users',
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
-        </svg>
-      )
-    },
-    {
-      name: '订阅套餐',
-      href: '/subscriptions',
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />
-        </svg>
-      )
-    },
-    {
-      name: '用户订阅',
-      href: '/user-subscriptions',
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" />
-        </svg>
-      )
-    },
-    {
-      name: '系统设置',
-      href: '/settings',
-      icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-        </svg>
-      )
-    },
-  ];
-
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const allNavigation = isAdmin ? [...navigation, ...adminNavigation] : navigation;
+  const activeItem = allNavigation.find((item) => isItemActive(location.pathname, item.href));
+  const initials = user?.username?.slice(0, 1).toUpperCase() || '?';
+
+  const closeMobileSidebar = () => setSidebarOpen(false);
 
   return (
-    <div className="h-screen bg-background flex overflow-hidden">
-      {/* 左侧导航栏 - 现代化设计 */}
-      <aside className={`${sidebarCollapsed ? 'w-20' : 'w-72'} bg-card border-r border-border shadow-sm flex flex-col flex-shrink-0 transition-all duration-300 ease-in-out`}>
-        {/* Logo */}
-        <div className="h-20 flex items-center justify-between px-5 border-b border-border">
+    <div className="min-h-screen bg-muted/30 text-foreground md:flex">
+      {sidebarOpen && (
+        <button
+          type="button"
+          aria-label="关闭导航菜单"
+          className="fixed inset-0 z-30 bg-background/80 backdrop-blur-sm md:hidden"
+          onClick={closeMobileSidebar}
+        />
+      )}
+
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r bg-card transition-transform duration-200 md:static md:z-auto md:translate-x-0',
+          sidebarCollapsed ? 'md:w-20' : 'md:w-72',
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        )}
+      >
+        <div className={cn('flex h-16 shrink-0 items-center border-b px-4', sidebarCollapsed ? 'justify-center' : 'justify-between')}>
+          <Brand collapsed={sidebarCollapsed} />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="md:hidden"
+            aria-label="关闭导航菜单"
+            onClick={closeMobileSidebar}
+          >
+            <X className="size-4" />
+          </Button>
           {!sidebarCollapsed && (
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-xl flex items-center justify-center shadow-md" style={{ background: 'linear-gradient(135deg, #0f172a, #1e3a5f)' }}>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" className="w-7 h-7">
-                  <path d="M14 18 L38 18 L38 13 L50 22 L38 31 L38 26 L14 26Z" fill="#38bdf8" opacity="0.9"/>
-                  <path d="M50 46 L26 46 L26 51 L14 42 L26 33 L26 38 L50 38Z" fill="#818cf8" opacity="0.9"/>
-                  <circle cx="10" cy="22" r="3" fill="none" stroke="#38bdf8" strokeWidth="1.5" opacity="0.7"/>
-                  <circle cx="10" cy="22" r="1.2" fill="#38bdf8" opacity="0.8"/>
-                  <circle cx="54" cy="42" r="3" fill="none" stroke="#818cf8" strokeWidth="1.5" opacity="0.7"/>
-                  <circle cx="54" cy="42" r="1.2" fill="#818cf8" opacity="0.8"/>
-                  <circle cx="32" cy="32" r="4" fill="none" stroke="#e2e8f0" strokeWidth="1.2" opacity="0.5"/>
-                  <circle cx="32" cy="32" r="2" fill="#e2e8f0" opacity="0.8"/>
-                  <circle cx="21" cy="32" r="1.2" fill="#38bdf8" opacity="0.4"/>
-                  <circle cx="43" cy="32" r="1.2" fill="#818cf8" opacity="0.4"/>
-                </svg>
-              </div>
-              <div>
-                <span className="font-bold text-xl text-foreground">OxiProxy</span>
-                <p className="text-xs text-muted-foreground font-medium">内网穿透</p>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden md:inline-flex"
+              aria-label="收起导航栏"
+              onClick={() => setSidebarCollapsed(true)}
+            >
+              <PanelLeftClose className="size-4" />
+            </Button>
+          )}
+        </div>
+
+        <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5" aria-label="主导航">
+          <div>
+            <p className={cn('mb-2 px-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground', sidebarCollapsed && 'sr-only')}>
+              工作区
+            </p>
+            <div className="space-y-1">
+              {navigation.map((item) => {
+                const Icon = item.icon;
+                const active = isItemActive(location.pathname, item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    to={item.href}
+                    onClick={closeMobileSidebar}
+                    title={sidebarCollapsed ? item.name : undefined}
+                    className={cn(
+                      'flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      sidebarCollapsed && 'justify-center px-0',
+                      active ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                    )}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <Icon className="size-4 shrink-0" aria-hidden="true" />
+                    {!sidebarCollapsed && <span>{item.name}</span>}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+
+          {isAdmin && (
+            <div>
+              <Separator className="mb-5" />
+              <p className={cn('mb-2 px-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground', sidebarCollapsed && 'sr-only')}>
+                管理
+              </p>
+              <div className="space-y-1">
+                {adminNavigation.map((item) => {
+                  const Icon = item.icon;
+                  const active = isItemActive(location.pathname, item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      to={item.href}
+                      onClick={closeMobileSidebar}
+                      title={sidebarCollapsed ? item.name : undefined}
+                      className={cn(
+                        'flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        sidebarCollapsed && 'justify-center px-0',
+                        active ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                      )}
+                      aria-current={active ? 'page' : undefined}
+                    >
+                      <Icon className="size-4 shrink-0" aria-hidden="true" />
+                      {!sidebarCollapsed && <span>{item.name}</span>}
+                    </Link>
+                  );
+                })}
               </div>
             </div>
           )}
-          <button
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-            className="p-2.5 rounded-lg hover:bg-accent transition-all duration-200 text-muted-foreground hover:text-accent-foreground"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
-              {sidebarCollapsed ? (
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-              ) : (
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M12 17.25h8.25" />
-              )}
-            </svg>
-          </button>
-        </div>
-
-        {/* 导航菜单 */}
-        <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto scrollbar-hidden">
-          {allNavigation.map((item) => {
-            const isActive = location.pathname === item.href;
-            return (
-              <Link
-                key={item.name}
-                to={item.href}
-                className={`flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all duration-200 group relative ${
-                  isActive
-                    ? 'text-primary-foreground shadow-sm'
-                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                }`}
-                style={isActive ? { background: 'linear-gradient(135deg, hsl(210 100% 45%), hsl(189 94% 43%))' } : undefined}
-                title={sidebarCollapsed ? item.name : undefined}
-              >
-                <span className="relative z-10 transition-colors">
-                  {item.icon}
-                </span>
-                {!sidebarCollapsed && (
-                  <span className="relative z-10 font-medium text-sm">{item.name}</span>
-                )}
-                {isActive && !sidebarCollapsed && (
-                  <div className="ml-auto">
-                    <div className="w-1.5 h-1.5 bg-primary-foreground rounded-full"></div>
-                  </div>
-                )}
-              </Link>
-            );
-          })}
         </nav>
 
-        {/* 用户信息 */}
-        <div className="p-4 border-t border-border">
-          <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3'} p-3 rounded-lg bg-muted border border-border`}>
-            <div className="w-10 h-10 rounded-lg flex items-center justify-center text-primary-foreground font-bold shadow-sm text-sm" style={{ background: 'linear-gradient(135deg, hsl(210 100% 45%), hsl(189 94% 43%))' }}>
-              {user?.username?.charAt(0).toUpperCase()}
+        <div className="shrink-0 border-t p-3">
+          <div className={cn('flex items-center gap-3 px-2 py-2', sidebarCollapsed && 'justify-center')}>
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-sm font-semibold text-foreground ring-1 ring-border">
+              {initials}
             </div>
             {!sidebarCollapsed && (
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-foreground truncate">{user?.username}</p>
-                <p className="text-xs text-muted-foreground font-medium">
-                  {isAdmin ? '管理员' : '用户'}
-                </p>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{user?.username}</p>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+                  <span className="text-xs text-muted-foreground">{isAdmin ? '管理员' : '已连接'}</span>
+                </div>
               </div>
             )}
           </div>
-          <button
+          <Button
+            variant="ghost"
+            className={cn('mt-1 w-full justify-start gap-3 text-muted-foreground hover:bg-destructive/10 hover:text-destructive', sidebarCollapsed && 'justify-center px-0')}
             onClick={logout}
-            className={`mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-destructive hover:text-destructive-foreground hover:bg-destructive rounded-lg transition-all duration-200 border border-input hover:border-transparent ${sidebarCollapsed ? 'px-2' : ''}`}
             title={sidebarCollapsed ? '退出登录' : undefined}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
-            </svg>
-            {!sidebarCollapsed && <span>退出登录</span>}
-          </button>
+            <LogOut className="size-4" />
+            {!sidebarCollapsed && '退出登录'}
+          </Button>
         </div>
       </aside>
 
-      {/* 主内容区 */}
-      <div className="flex-1 flex flex-col min-h-screen overflow-hidden">
-        {/* 顶部栏 - 现代化设计 */}
-        <header className="h-16 bg-card border-b border-border flex items-center justify-between px-8">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg flex items-center justify-center shadow-sm" style={{ background: 'linear-gradient(135deg, hsl(210 100% 45%), hsl(189 94% 43%))' }}>
-                <span className="text-primary-foreground">
-                  {allNavigation.find(item => item.href === location.pathname)?.icon}
-                </span>
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between border-b bg-card/95 px-4 backdrop-blur sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="md:hidden"
+              aria-label="打开导航菜单"
+              onClick={() => setSidebarOpen(true)}
+            >
+              <Menu className="size-5" />
+            </Button>
+            {sidebarCollapsed && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="hidden md:inline-flex"
+                aria-label="展开导航栏"
+                onClick={() => setSidebarCollapsed(false)}
+              >
+                <PanelLeftOpen className="size-4" />
+              </Button>
+            )}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                {activeItem && <activeItem.icon className="hidden size-4 text-muted-foreground sm:block" aria-hidden="true" />}
+                <h1 className="truncate text-base font-semibold tracking-tight sm:text-lg">{activeItem?.name || '页面'}</h1>
               </div>
-              <div>
-                <h1 className="text-lg font-semibold text-foreground">
-                  {allNavigation.find(item => item.href === location.pathname)?.name || '页面'}
-                </h1>
-                <p className="text-xs text-muted-foreground">管理和监控您的服务</p>
-              </div>
+              <p className="hidden text-xs text-muted-foreground sm:block">管理和监控您的 OxiProxy 服务</p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3 px-4 py-2 bg-muted rounded-lg border border-border">
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center text-primary-foreground font-semibold text-xs shadow-sm" style={{ background: 'linear-gradient(135deg, hsl(210 100% 45%), hsl(189 94% 43%))' }}>
-                {user?.username?.charAt(0).toUpperCase()}
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
+              <span className="size-2 rounded-full bg-emerald-500" aria-hidden="true" />
+              服务正常
+            </div>
+            <Separator orientation="vertical" className="hidden h-6 sm:block" />
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
+                {initials}
               </div>
-              <div className="text-sm">
-                <p className="font-semibold text-foreground">{user?.username}</p>
-                {isAdmin && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-primary-foreground rounded-md" style={{ background: 'linear-gradient(135deg, hsl(210 100% 45%), hsl(189 94% 43%))' }}>
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
-                    </svg>
-                    管理员
-                  </span>
-                )}
+              <div className="hidden text-sm sm:block">
+                <p className="max-w-32 truncate font-medium">{user?.username}</p>
+                {isAdmin && <Badge variant="secondary" className="mt-0.5 px-1.5 py-0 text-[10px]"><ShieldCheck className="mr-1 size-3" />管理员</Badge>}
               </div>
             </div>
           </div>
         </header>
 
-        {/* 页面内容 */}
-        <main className="flex-1 overflow-auto p-8 bg-background">
-          {children}
+        <main className="min-h-0 flex-1 overflow-auto p-4 sm:p-6 lg:p-8">
+          <div className="mx-auto w-full max-w-[1600px]">{children}</div>
         </main>
       </div>
     </div>

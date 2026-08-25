@@ -18,6 +18,9 @@ OxiProxy 反向代理服务的 Web 管理面板，基于 React + TypeScript + Vi
 - **React Router** - 路由管理
 - **Axios** - HTTP 请求
 - **Tailwind CSS** - 样式框架
+- **shadcn/ui + Radix UI** - 可组合、可访问的界面组件
+- **Lucide** - 图标系统
+- **Sonner** - Toast 通知
 
 ## 开发
 
@@ -58,6 +61,8 @@ dashboard/
 ├── src/
 │   ├── components/       # 通用组件
 │   │   ├── Layout.tsx          # 主布局
+│   │   ├── AuthShell.tsx       # 登录/注册布局
+│   │   ├── ui/                 # shadcn/ui 组件
 │   │   └── ProtectedRoute.tsx  # 路由守卫
 │   ├── contexts/        # React Context
 │   │   └── AuthContext.tsx     # 认证上下文
@@ -80,7 +85,8 @@ dashboard/
 ├── index.html           # HTML 模板
 ├── package.json         # 依赖配置
 ├── tsconfig.json        # TypeScript 配置
-└── vite.config.ts       # Vite 配置
+├── vite.config.ts       # Vite 配置
+└── components.json      # shadcn/ui 配置
 ```
 
 ## API 接口
