@@ -1,26 +1,19 @@
-interface SkeletonProps {
-  className?: string;
-}
-
-function SkeletonBlock({ className = '' }: SkeletonProps) {
-  return (
-    <div className={`animate-pulse bg-muted rounded-lg ${className}`} />
-  );
-}
+import { Card, CardContent, CardHeader } from './ui/card';
+import { Skeleton } from './ui/skeleton';
 
 export function TableSkeleton({ rows = 5, cols = 5 }: { rows?: number; cols?: number }) {
   return (
-    <div className="bg-card rounded-2xl shadow-sm border border-border overflow-hidden">
-      <div className="bg-muted px-6 py-4 flex gap-6">
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <div className="flex gap-6 border-b bg-muted/30 px-6 py-4">
         {Array.from({ length: cols }).map((_, i) => (
-          <SkeletonBlock key={i} className="h-4 flex-1" />
+          <Skeleton key={i} className="h-4 flex-1" />
         ))}
       </div>
       <div className="divide-y divide-border">
         {Array.from({ length: rows }).map((_, i) => (
-          <div key={i} className="px-6 py-4 flex items-center gap-6">
+          <div key={i} className="flex items-center gap-6 px-6 py-4">
             {Array.from({ length: cols }).map((_, j) => (
-              <SkeletonBlock key={j} className={`h-4 flex-1 ${j === 0 ? 'max-w-[80px]' : ''}`} />
+              <Skeleton key={j} className={`h-4 flex-1 ${j === 0 ? 'max-w-[80px]' : ''}`} />
             ))}
           </div>
         ))}
@@ -31,13 +24,13 @@ export function TableSkeleton({ rows = 5, cols = 5 }: { rows?: number; cols?: nu
 
 export function CardSkeleton() {
   return (
-    <div className="bg-card rounded-2xl p-5 shadow-sm border border-border animate-pulse">
+    <div className="rounded-lg border bg-card p-5">
       <div className="flex items-center justify-between">
-        <div className="space-y-3 flex-1">
-          <SkeletonBlock className="h-4 w-20" />
-          <SkeletonBlock className="h-8 w-16" />
+        <div className="flex-1 space-y-3">
+          <Skeleton className="h-4 w-20" />
+          <Skeleton className="h-8 w-16" />
         </div>
-        <SkeletonBlock className="h-12 w-12 rounded-xl" />
+        <Skeleton className="size-10" />
       </div>
     </div>
   );
@@ -45,23 +38,31 @@ export function CardSkeleton() {
 
 export function DashboardSkeleton() {
   return (
-    <div className="space-y-6">
-      <SkeletonBlock className="h-28 rounded-2xl" />
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <CardSkeleton key={i} />
-        ))}
+    <div className="space-y-6" aria-label="加载中">
+      <Card>
+        <CardContent className="flex items-center gap-4 p-6 sm:p-8">
+          <Skeleton className="size-11 shrink-0" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-6 w-56 max-w-full" />
+            <Skeleton className="h-4 w-80 max-w-full" />
+          </div>
+        </CardContent>
+      </Card>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => <CardSkeleton key={i} />)}
       </div>
-      <div className="bg-card rounded-2xl shadow-sm border border-border p-6 space-y-4">
-        <SkeletonBlock className="h-6 w-32" />
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <SkeletonBlock key={i} className="h-28 rounded-xl" />
-          ))}
-        </div>
-      </div>
+      <Card>
+        <CardHeader className="space-y-2 border-b">
+          <Skeleton className="h-5 w-32" />
+          <Skeleton className="h-4 w-64 max-w-full" />
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-3 p-6 sm:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
-export default SkeletonBlock;
+export { Skeleton };
+export default Skeleton;
