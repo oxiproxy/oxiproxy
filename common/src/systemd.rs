@@ -215,6 +215,15 @@ pub fn stop_service(service_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Restart the installed service using its existing unit configuration.
+/// Let systemd report missing units and authorization failures; never fall back to daemon mode.
+pub fn restart_service(service_name: &str) -> Result<()> {
+    ensure_systemctl()?;
+    run_systemctl(&["restart", "--", &format!("{}.service", service_name)])?;
+    println!("🔄 已重启 systemd 服务: {}", service_name);
+    Ok(())
+}
+
 fn ensure_root() -> Result<()> {
     let euid = unsafe { libc::geteuid() };
     if euid != 0 {

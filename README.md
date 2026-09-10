@@ -775,3 +775,15 @@ cd dashboard && bun run lint                           # 前端检查
 - 初始 HTTP 请求头等待上限为 10 秒、缓冲上限为 32 KiB；TLS ClientHello 等待上限为 10 秒、读取上限为 64 KiB；每个共享端口最多同时接收 1024 条连接。
 
 升级时需同时更新 Controller（含新版面板）和 Node，再创建域名代理。Controller 启动时自动迁移数据库，为旧代理填入空域名；Client 的隧道数据协议不变，无须为此功能更新 Client。Node 版本过旧时不能使用域名代理。升级前请按现有运维流程备份数据库。
+
+### 重启 Controller
+
+Linux 上通过 `controller install` 安装为 systemd 服务后，可以使用：
+
+```bash
+sudo ./controller restart
+# 自定义服务名，与 install --service-name 保持一致
+sudo ./controller restart --service-name my-controller
+```
+
+命令使用 systemd 重启服务，沿用 unit 中的工作目录、用户和启动参数。服务不存在、systemctl 不可用或权限不足时返回非零退出码。此命令仅适用于 Linux systemd 服务；手动 `daemon` 模式不适用。更新二进制后执行该命令即可让服务加载新版本，再用 `./controller status` 查看状态。
