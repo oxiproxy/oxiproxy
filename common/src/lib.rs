@@ -40,3 +40,5 @@ pub use tunnel::{
 };
 
 pub use config::KcpConfig;
+
+pub mod update;

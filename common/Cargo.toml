@@ -4,6 +4,8 @@ version = "0.0.0-dev"
 edition = "2021"
 
 [dependencies]
+clap = { workspace = true, features = ["env"] }
+reqwest = { workspace = true, features = ["blocking", "rustls-tls"] }
 tokio = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
@@ -35,3 +37,6 @@ libc = { workspace = true }
 
 [build-dependencies]
 tonic-build = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

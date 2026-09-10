@@ -626,6 +626,30 @@ rm -f data/oxiproxy.db
 <details>
 <summary><b>如何更新</b></summary>
 
+已支持新下载参数的版本可在命令行选择更新包下载线路（`controller`、`node`、`client` 通用）：
+
+```bash
+# 默认自动模式：GitHub + 已配置的镜像并行测速，按速度下载，失败时切换
+./controller update --mirror https://your-trusted-proxy.example
+
+# 多条候选线路（将示例域名替换为你信任的 GitHub 下载代理）
+./controller update --source auto --mirror https://proxy-a.example --mirror https://proxy-b.example
+
+# 强制直连 / 仅在指定镜像之间选择
+./controller update --source direct
+./controller update --source mirror --mirror https://your-trusted-proxy.example
+
+# 保存到 shell 环境，之后直接执行 update
+export OXIPROXY_UPDATE_MIRRORS=https://proxy-a.example,https://proxy-b.example
+export OXIPROXY_UPDATE_SOURCE=auto
+./controller update
+```
+
+镜像采用 `https://代理前缀/https://github.com/...` 拼接格式，仅支持 HTTPS 前缀，最多 8 条。默认不内置第三方镜像；未配置时使用 GitHub 直连。请仅配置可信代理，它们会提供可执行更新包。测速并行读取最多 256 KiB，每条最多 5 秒，测速失败的线路保留为备用；实际速度会随网络变化，完整下载每条最多等待 300 秒。该设置只影响命令行更新包下载，版本查询仍使用 GitHub API，面板远程更新和安装脚本暂不受影响。
+
+截图中的旧版更新器尚不识别这些参数，需要先手动安装包含此功能的新版本；更新完成后仍需重启相应服务。
+
+
 ```bash
 # 脚本安装方式 —— 重新运行安装脚本，选择「更新已安装的组件」
 curl -fsSL https://raw.githubusercontent.com/oxiproxy/oxiproxy/master/install.sh | bash

@@ -155,7 +155,7 @@ enum Command {
     },
 
     /// 更新到最新版本
-    Update,
+    Update(common::update::UpdateOptions),
 
     /// 查询守护进程运行状态
     Status {
@@ -383,8 +383,8 @@ fn main() -> anyhow::Result<()> {
             ))?;
         }
 
-        Command::Update => {
-            update_binary()?;
+        Command::Update(options) => {
+            update_binary(options)?;
         }
 
         #[cfg(target_os = "linux")]
@@ -700,7 +700,7 @@ fn main() -> anyhow::Result<()> {
 
         Command::Service { .. } => windows_service::run_service(),
 
-        Command::Update => update_binary(),
+        Command::Update(options) => update_binary(options),
 
         Command::Status { pid_file } => {
             let code = print_status(&pid_file);
@@ -818,7 +818,8 @@ fn stop_daemon_windows(pid_file: &str) -> anyhow::Result<()> {
 }
 
 /// 更新二进制文件到最新版本
-fn update_binary() -> anyhow::Result<()> {
+fn update_binary(options: common::update::UpdateOptions) -> anyhow::Result<()> {
+    options.validate()?;
     println!("正在检查更新...");
 
     let bin_name = "client";
@@ -869,17 +870,7 @@ fn update_binary() -> anyhow::Result<()> {
     // 下载到临时文件
     let tmp_dir = tempfile::TempDir::new()?;
     let tmp_archive_path = tmp_dir.path().join(&asset.name);
-    let mut tmp_archive = std::fs::File::create(&tmp_archive_path)?;
-
-    let mut download = self_update::Download::from_url(&asset.download_url);
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        reqwest::header::ACCEPT,
-        "application/octet-stream".parse().unwrap(),
-    );
-    download.set_headers(headers);
-    download.show_progress(true);
-    download.download_to(&mut tmp_archive)?;
+    options.download(&asset.download_url, &tmp_archive_path)?;
 
     // 解压并替换二进制
     let bin_path_in_archive = format!("{}{}", bin_name, std::env::consts::EXE_SUFFIX);
