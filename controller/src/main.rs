@@ -94,7 +94,7 @@ enum Command {
     },
 
     /// 更新到最新版本
-    Update,
+    Update(common::update::UpdateOptions),
 
     /// 重置 admin 管理员密码
     Passwd,
@@ -228,8 +228,8 @@ fn main() -> Result<()> {
             runtime.block_on(run_controller(Some(log_dir)))?;
         }
 
-        Command::Update => {
-            update_binary()?;
+        Command::Update(options) => {
+            update_binary(options)?;
         }
 
         Command::Passwd => {
@@ -444,7 +444,7 @@ fn main() -> Result<()> {
             log_dir,
         } => start_daemon_windows(&pid_file, &log_dir),
 
-        Command::Update => update_binary(),
+        Command::Update(options) => update_binary(options),
 
         Command::Passwd => {
             let runtime = tokio::runtime::Runtime::new()?;
@@ -544,7 +544,8 @@ fn stop_daemon_windows(pid_file: &str) -> Result<()> {
 }
 
 /// 更新二进制文件到最新版本
-fn update_binary() -> Result<()> {
+fn update_binary(options: common::update::UpdateOptions) -> Result<()> {
+    options.validate()?;
     println!("正在检查更新...");
 
     let bin_name = "controller";
@@ -592,17 +593,7 @@ fn update_binary() -> Result<()> {
     // 下载到临时文件
     let tmp_dir = tempfile::TempDir::new()?;
     let tmp_archive_path = tmp_dir.path().join(&asset.name);
-    let mut tmp_archive = std::fs::File::create(&tmp_archive_path)?;
-
-    let mut download = self_update::Download::from_url(&asset.download_url);
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        reqwest::header::ACCEPT,
-        "application/octet-stream".parse().unwrap(),
-    );
-    download.set_headers(headers);
-    download.show_progress(true);
-    download.download_to(&mut tmp_archive)?;
+    options.download(&asset.download_url, &tmp_archive_path)?;
 
     // 解压并替换二进制
     let bin_path_in_archive = format!("{}{}", bin_name, std::env::consts::EXE_SUFFIX);
