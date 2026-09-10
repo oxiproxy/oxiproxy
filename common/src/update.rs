@@ -9,6 +9,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const DEFAULT_MIRROR: &str = "https://gh-proxy.com";
+
 #[derive(Clone, Copy, Debug, Default, ValueEnum, PartialEq, Eq)]
 pub enum DownloadSource {
     /// 测速后优先使用最快线路，失败时切换
@@ -16,7 +18,7 @@ pub enum DownloadSource {
     Auto,
     /// 仅使用 GitHub 直连
     Direct,
-    /// 仅使用配置的镜像（多个镜像会测速排序）
+    /// 仅使用镜像（未配置时使用默认镜像，多个镜像会测速排序）
     Mirror,
 }
 
@@ -30,16 +32,13 @@ pub struct UpdateOptions {
         env = "OXIPROXY_UPDATE_SOURCE"
     )]
     pub source: DownloadSource,
-    /// 可信 GitHub 下载代理前缀，可重复指定；环境变量用逗号分隔
+    /// 自定义镜像，替换默认 gh-proxy.com；可重复指定，环境变量用逗号分隔
     #[arg(long, env = "OXIPROXY_UPDATE_MIRRORS", value_delimiter = ',')]
     pub mirror: Vec<String>,
 }
 
 impl UpdateOptions {
     pub fn validate(&self) -> Result<()> {
-        if self.source == DownloadSource::Mirror && self.mirror.is_empty() {
-            bail!("--source mirror 需要至少一个 --mirror URL");
-        }
         if self.mirror.len() > 8 {
             bail!("最多配置 8 条镜像线路");
         }
@@ -64,10 +63,15 @@ impl UpdateOptions {
             routes.push(("GitHub 直连".into(), original.into()));
         }
         if self.source != DownloadSource::Direct {
-            for mirror in &self.mirror {
+            let mirrors: Vec<&str> = if self.mirror.is_empty() {
+                vec![DEFAULT_MIRROR]
+            } else {
+                self.mirror.iter().map(String::as_str).collect()
+            };
+            for mirror in mirrors {
                 let url = format!("{}/{}", mirror.trim_end_matches('/'), original);
                 if !routes.iter().any(|(_, existing)| existing == &url) {
-                    routes.push((format!("镜像 {}", routes.len() + 1), url));
+                    routes.push((format!("镜像 {}", mirror), url));
                 }
             }
         }
@@ -115,8 +119,6 @@ impl UpdateOptions {
             }
             ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
             routes = ranked.into_iter().map(|(route, _)| route).collect();
-        } else if self.source == DownloadSource::Auto && self.mirror.is_empty() {
-            println!("未配置镜像，使用 GitHub 直连；可通过 --mirror 添加可信下载代理");
         }
         download_routes(&client, &routes, destination)
     }
@@ -247,13 +249,33 @@ mod tests {
             mirror: vec![]
         }
         .validate()
-        .is_err());
+        .is_ok());
         assert!(UpdateOptions {
             source: DownloadSource::Auto,
             mirror: vec!["https://example.com/proxy/".into()]
         }
         .validate()
         .is_ok());
+    }
+
+    #[test]
+    fn default_mirror_is_used_unless_overridden_or_direct() {
+        let original = "https://github.com/org/repo/releases/download/v1/app.tar.gz";
+        let mut options = UpdateOptions::default();
+        let routes = options.routes(original);
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0].1, original);
+        assert_eq!(routes[1].1, format!("{DEFAULT_MIRROR}/{original}"));
+        options.source = DownloadSource::Mirror;
+        assert!(options.validate().is_ok());
+        assert_eq!(options.routes(original), vec![routes[1].clone()]);
+        options.source = DownloadSource::Direct;
+        assert_eq!(options.routes(original), vec![routes[0].clone()]);
+        options.source = DownloadSource::Auto;
+        options.mirror = vec!["https://custom.example".into()];
+        let routes = options.routes(original);
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[1].1, format!("https://custom.example/{original}"));
     }
 
     #[test]
