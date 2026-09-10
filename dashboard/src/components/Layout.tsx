@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   ArrowLeftRight,
@@ -64,7 +64,7 @@ function Brand({ collapsed = false }: { collapsed?: boolean }) {
       {!collapsed && (
         <span className="min-w-0">
           <span className="block truncate text-sm font-semibold tracking-tight">OxiProxy</span>
-          <span className="block truncate text-xs text-muted-foreground">内网穿透控制台</span>
+          <span className="block truncate text-xs text-muted-foreground">NETWORK CONSOLE</span>
         </span>
       )}
     </Link>
@@ -80,10 +80,15 @@ export default function Layout({ children }: LayoutProps) {
   const activeItem = allNavigation.find((item) => isItemActive(location.pathname, item.href));
   const initials = user?.username?.slice(0, 1).toUpperCase() || '?';
 
+  const mainRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 });
+  }, [location.pathname]);
+
   const closeMobileSidebar = () => setSidebarOpen(false);
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-muted/30 text-foreground">
+    <div className="console-shell flex h-dvh overflow-hidden bg-background text-foreground">
       {sidebarOpen && (
         <button
           type="button"
@@ -95,12 +100,12 @@ export default function Layout({ children }: LayoutProps) {
 
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col overflow-hidden border-r bg-card transition-transform duration-200 md:static md:z-auto md:translate-x-0',
-          sidebarCollapsed ? 'md:w-20' : 'md:w-72',
+          'console-sidebar fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col overflow-hidden border-r bg-card transition-transform duration-200 md:static md:z-auto md:translate-x-0',
+          sidebarCollapsed ? 'md:w-20' : 'md:w-64',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         )}
       >
-        <div className={cn('flex h-16 shrink-0 items-center border-b px-4', sidebarCollapsed ? 'justify-center' : 'justify-between')}>
+        <div className={cn('flex h-20 shrink-0 items-center border-b px-5', sidebarCollapsed ? 'justify-center' : 'justify-between')}>
           <Brand collapsed={sidebarCollapsed} />
           <Button
             variant="ghost"
@@ -124,7 +129,7 @@ export default function Layout({ children }: LayoutProps) {
           )}
         </div>
 
-        <nav className="min-h-0 flex-1 space-y-6 overflow-y-auto px-3 py-5" aria-label="主导航">
+        <nav className="min-h-0 flex-1 space-y-7 overflow-y-auto px-3 py-6" aria-label="主导航">
           <div>
             <p className={cn('mb-2 px-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground', sidebarCollapsed && 'sr-only')}>
               工作区
@@ -242,13 +247,13 @@ export default function Layout({ children }: LayoutProps) {
                 {activeItem && <activeItem.icon className="hidden size-4 text-muted-foreground sm:block" aria-hidden="true" />}
                 <h1 className="truncate text-base font-semibold tracking-tight sm:text-lg">{activeItem?.name || '页面'}</h1>
               </div>
-              <p className="hidden text-xs text-muted-foreground sm:block">管理和监控您的 OxiProxy 服务</p>
+              <p className="hidden text-xs text-muted-foreground sm:block">网络管理 / OxiProxy</p>
             </div>
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
             <div className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex">
-              <span className="size-2 rounded-full bg-emerald-500" aria-hidden="true" />
-              服务正常
+              <span className="size-2 rounded-full bg-primary" aria-hidden="true" />
+              管理控制台
             </div>
             <Separator orientation="vertical" className="hidden h-6 sm:block" />
             <div className="flex items-center gap-2">
@@ -263,8 +268,8 @@ export default function Layout({ children }: LayoutProps) {
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-auto p-4 sm:p-6 lg:p-8">
-          <div className="mx-auto w-full max-w-[1600px]">{children}</div>
+        <main ref={mainRef} className="console-main min-h-0 flex-1 overflow-auto p-4 sm:p-6 lg:p-8">
+          <div className="mx-auto w-full max-w-[1440px]">{children}</div>
         </main>
       </div>
     </div>

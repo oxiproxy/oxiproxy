@@ -568,3 +568,72 @@ code {
 .login-fade-in {
   animation: login-fade-in 0.3s ease-out;
 }
+
+/* Management console: restrained blue accents and a permanent navigation rail. */
+.console-shell {
+  --background: 220 33% 97%;
+  --foreground: 222 40% 16%;
+  --primary: 221 83% 53%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 220 24% 95%;
+  --muted-foreground: 218 16% 46%;
+  --border: 220 25% 90%;
+  --input: 220 25% 86%;
+  --ring: 221 83% 53%;
+  --accent: 220 60% 96%;
+  --accent-foreground: 221 70% 40%;
+}
+.console-sidebar {
+  --card: 222 42% 12%;
+  --foreground: 216 25% 94%;
+  --muted: 222 28% 20%;
+  --muted-foreground: 218 20% 69%;
+  --border: 222 26% 23%;
+  --accent: 222 30% 21%;
+  --accent-foreground: 0 0% 100%;
+  color: hsl(var(--foreground));
+}
+.console-sidebar nav a { border: 1px solid transparent; }
+.console-sidebar nav a[aria-current="page"] {
+  background: hsl(221 83% 53% / .18);
+  border-color: hsl(221 83% 65% / .24);
+  color: #a9c9ff;
+  box-shadow: inset 3px 0 #6097ff;
+}
+.console-main { scrollbar-gutter: stable; }
+.console-main h2 { letter-spacing: -.035em; }
+.console-main input, .console-main select { min-width: 0; }
+.console-main table { font-variant-numeric: tabular-nums; }
+.settings-sections a {
+  display: flex; align-items: center; gap: 1.5rem;
+  padding: .75rem 1rem; border: 1px solid hsl(var(--border));
+  border-radius: .75rem; background: hsl(var(--card));
+  font-size: .8125rem; font-weight: 500;
+  transition: border-color .15s, color .15s;
+}
+.settings-sections a:hover, .settings-sections a:focus-visible {
+  border-color: hsl(var(--primary)); color: hsl(var(--primary));
+}
+.settings-sections span { color: hsl(var(--muted-foreground)); font-size: .6875rem; }
+.settings-page label { font-size: .8125rem; line-height: 1.5; }
+.settings-page [id^="settings-"] > :first-child {
+  border-bottom: 1px solid hsl(var(--border)); margin-bottom: 1.5rem;
+}
+.settings-page [id^="settings-"] p { line-height: 1.65; }
+@media (max-width: 639px) {
+  .console-main { scrollbar-gutter: auto; }
+  .settings-sections { display: grid; grid-template-columns: 1fr; }
+  .settings-sections a { justify-content: space-between; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .console-shell *, .console-shell *::before, .console-shell *::after {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.overview-welcome {
+  background: linear-gradient(115deg, #ffffff 45%, #eaf1ff);
+  border-color: #dce6f6;
+}

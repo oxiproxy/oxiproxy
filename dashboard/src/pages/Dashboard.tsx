@@ -53,7 +53,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <Card className="overflow-hidden border-primary/20">
+      <Card className="overview-welcome overflow-hidden border-primary/20">
         <CardContent className="flex flex-col justify-between gap-6 p-6 sm:flex-row sm:items-center sm:p-8">
           <div className="flex items-start gap-4">
             <div className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
@@ -62,7 +62,7 @@ export default function Dashboard() {
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-xl font-semibold tracking-tight sm:text-2xl">欢迎回来，{user?.username}</h2>
-                <Badge variant="success"><span className="mr-1.5 size-1.5 rounded-full bg-emerald-600" />运行正常</Badge>
+                <Badge variant="secondary">工作区概览</Badge>
               </div>
               <p className="mt-1 text-sm text-muted-foreground">这是您的 OxiProxy 服务概览，关键资源状态一目了然。</p>
             </div>

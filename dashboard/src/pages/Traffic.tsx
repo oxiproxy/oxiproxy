@@ -82,7 +82,7 @@ export default function Traffic() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-2">
             <SkeletonBlock className="h-8 w-32" />
             <SkeletonBlock className="h-4 w-48" />
@@ -113,7 +113,7 @@ export default function Traffic() {
   return (
     <div className="space-y-6">
       {/* 页面标题和控制 */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-foreground">流量统计</h2>
           <p className="mt-1 text-sm text-muted-foreground">查看流量使用情况和趋势分析</p>

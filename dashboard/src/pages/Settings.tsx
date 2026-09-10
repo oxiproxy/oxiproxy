@@ -19,6 +19,18 @@ interface ConfigItem {
   valueType: 'number' | 'string' | 'boolean';
 }
 
+const configLabels: Record<string, string> = {
+  web_port: '管理端口', internal_port: '节点连接端口', enable_registration: '开放注册',
+  default_traffic_quota_gb: '默认流量配额', default_max_port_count: '默认端口数量',
+  default_max_node_count: '默认节点数量', default_max_client_count: '默认客户端数量',
+  jwt_expiration_hours: '登录有效期', db_path: '数据库路径',
+  grpc_tls_enabled: '启用 gRPC TLS', grpc_domain: '服务器域名（SNI）',
+  grpc_tls_cert_path: '证书路径', grpc_tls_key_path: '私钥路径',
+  grpc_tls_cert_content: '证书文件', grpc_tls_key_content: '私钥文件',
+  web_tls_enabled: '启用 HTTPS', web_tls_cert_path: '证书路径', web_tls_key_path: '私钥路径',
+  web_tls_cert_content: '证书文件', web_tls_key_content: '私钥文件',
+};
+
 const configHints: Record<string, string> = {
   web_port: 'Web 管理界面的访问端口',
   internal_port: 'Node 和 Client 连接到 Controller 的 gRPC 端口',
@@ -223,6 +235,7 @@ export default function Settings() {
             <Button variant="outline" size="sm" asChild>
               <label className="cursor-pointer">
                 <input
+                  id={config.key}
                   type="file"
                   accept=".pem,.crt,.key"
                   onChange={handleFileUpload}
@@ -258,19 +271,21 @@ export default function Settings() {
       case 'number':
         return (
           <Input
+            id={config.key}
             type="number"
             value={value ?? 0}
             onChange={(e) => handleValueChange(config.key, e.target.value, config.valueType)}
-            className="max-w-xs"
+            className="w-full"
           />
         );
 
       case 'boolean':
         return (
           <select
+            id={config.key}
             value={value === true || value === 'true' ? 'true' : 'false'}
             onChange={(e) => handleValueChange(config.key, e.target.value, config.valueType)}
-            className="flex h-10 w-full max-w-xs rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="flex h-10 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             <option value="true">启用</option>
             <option value="false">禁用</option>
@@ -281,10 +296,11 @@ export default function Settings() {
       default:
         return (
           <Input
+            id={config.key}
             type="text"
             value={value || ''}
             onChange={(e) => handleValueChange(config.key, e.target.value, config.valueType)}
-            className="max-w-xs"
+            className="w-full"
           />
         );
     }
@@ -293,12 +309,12 @@ export default function Settings() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-2">
             <SkeletonBlock className="h-8 w-32" />
             <SkeletonBlock className="h-4 w-48" />
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-2">
             <SkeletonBlock className="h-10 w-28 rounded-xl" />
             <SkeletonBlock className="h-10 w-24 rounded-xl" />
             <SkeletonBlock className="h-10 w-28 rounded-xl" />
@@ -323,14 +339,14 @@ export default function Settings() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="settings-page space-y-6">
       {/* 页面标题和操作按钮 */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-2xl font-bold text-foreground">系统配置</h2>
           <p className="mt-1 text-sm text-muted-foreground">管理 OxiProxy Controller 的运行参数</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-2">
           {isAdmin && (
             <Button
               onClick={restartSystem}
@@ -353,7 +369,6 @@ export default function Settings() {
             onClick={handleSave}
             disabled={!hasChanges || saving}
             className="text-primary-foreground border-0"
-            style={{ background: 'linear-gradient(135deg, hsl(210 100% 45%), hsl(189 94% 43%))' }}
           >
             <Save className="w-4 h-4" />
             {saving ? '保存中...' : '保存更改'}
@@ -371,8 +386,14 @@ export default function Settings() {
         </Alert>
       )}
 
+      <nav aria-label="设置分区" className="settings-sections flex flex-wrap gap-2">
+        <a href="#settings-general">基础配置 <span>01</span></a>
+        {configs.some(c => c.key.startsWith('grpc_')) && <a href="#settings-grpc">节点连接加密 <span>02</span></a>}
+        {configs.some(c => c.key.startsWith('web_tls_')) && <a href="#settings-web">管理界面 HTTPS <span>03</span></a>}
+      </nav>
+
       {/* 基础配置 */}
-      <Card>
+      <Card id="settings-general" className="scroll-mt-6">
         <CardHeader>
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'hsl(217 91% 60% / 0.15)' }}>
@@ -385,11 +406,11 @@ export default function Settings() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {configs.filter(c => ['web_port', 'internal_port', 'enable_registration', 'default_traffic_quota_gb', 'default_max_port_count', 'default_max_node_count', 'default_max_client_count'].includes(c.key)).map((config) => (
               <div key={config.key} className="space-y-2">
-                <Label className="text-foreground">
-                  {config.description}
+                <Label htmlFor={config.key} className="text-foreground">
+                  {configLabels[config.key] || config.description}
                 </Label>
                 <div className="flex items-center gap-3">
                   {renderConfigInput(config)}
@@ -414,7 +435,7 @@ export default function Settings() {
 
       {/* gRPC TLS 配置 */}
       {configs.some(c => c.key === 'grpc_tls_enabled' || GRPC_TLS_CERT_ALL_KEYS.includes(c.key) || c.key === 'grpc_domain') && (
-        <Card>
+        <Card id="settings-grpc" className="scroll-mt-6">
           <CardHeader>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'hsl(142 71% 45% / 0.15)' }}>
@@ -428,11 +449,11 @@ export default function Settings() {
           </CardHeader>
           <CardContent className="space-y-6">
             {/* TLS 开关和域名 */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {configs.filter(c => c.key === 'grpc_tls_enabled' || c.key === 'grpc_domain').map((config) => (
                 <div key={config.key} className="space-y-2">
-                  <Label className="text-foreground">
-                    {config.description}
+                  <Label htmlFor={config.key} className="text-foreground">
+                    {configLabels[config.key] || config.description}
                   </Label>
                   {renderConfigInput(config)}
                   {configHints[config.key] && (
@@ -448,7 +469,7 @@ export default function Settings() {
             {/* 证书配置 */}
             {configs.some(c => GRPC_TLS_CERT_ALL_KEYS.includes(c.key)) && (
               <div className="border-t border-border pt-6">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <Label className="text-foreground">证书配置方式</Label>
                   <div className="inline-flex rounded-lg border border-border p-1 bg-muted">
                     <button
@@ -474,13 +495,13 @@ export default function Settings() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {configs
                     .filter(c => grpcCertMode === 'upload' ? GRPC_TLS_CERT_CONTENT_KEYS.includes(c.key) : GRPC_TLS_CERT_PATH_KEYS.includes(c.key))
                     .map((config) => (
                       <div key={config.key} className="space-y-2">
-                        <Label className="text-foreground">
-                          {config.description}
+                        <Label htmlFor={config.key} className="text-foreground">
+                          {configLabels[config.key] || config.description}
                         </Label>
                         {renderConfigInput(config)}
                         {configHints[config.key] && (
@@ -501,7 +522,7 @@ export default function Settings() {
 
       {/* Web TLS 配置 */}
       {configs.some(c => c.key === 'web_tls_enabled' || WEB_TLS_CERT_ALL_KEYS.includes(c.key)) && (
-        <Card>
+        <Card id="settings-web" className="scroll-mt-6">
           <CardHeader>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'hsl(189 94% 43% / 0.15)' }}>
@@ -517,8 +538,8 @@ export default function Settings() {
             {/* TLS 开关 */}
             {configs.filter(c => c.key === 'web_tls_enabled').map((config) => (
               <div key={config.key} className="space-y-2">
-                <Label className="text-foreground">
-                  {config.description}
+                <Label htmlFor={config.key} className="text-foreground">
+                  {configLabels[config.key] || config.description}
                 </Label>
                 {renderConfigInput(config)}
                 {configHints[config.key] && (
@@ -533,7 +554,7 @@ export default function Settings() {
             {/* 证书配置 */}
             {configs.some(c => WEB_TLS_CERT_ALL_KEYS.includes(c.key)) && (
               <div className="border-t border-border pt-6">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <Label className="text-foreground">证书配置方式</Label>
                   <div className="inline-flex rounded-lg border border-border p-1 bg-muted">
                     <button
@@ -559,13 +580,13 @@ export default function Settings() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {configs
                     .filter(c => webCertMode === 'upload' ? WEB_TLS_CERT_CONTENT_KEYS.includes(c.key) : WEB_TLS_CERT_PATH_KEYS.includes(c.key))
                     .map((config) => (
                       <div key={config.key} className="space-y-2">
-                        <Label className="text-foreground">
-                          {config.description}
+                        <Label htmlFor={config.key} className="text-foreground">
+                          {configLabels[config.key] || config.description}
                         </Label>
                         {renderConfigInput(config)}
                         {configHints[config.key] && (

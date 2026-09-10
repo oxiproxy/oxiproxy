@@ -729,7 +729,7 @@ export default function Users() {
                 <h4 className="text-sm font-semibold text-foreground mb-3">流量配额</h4>
                 <div className="p-4 bg-muted rounded-xl border border-border mb-3">
                   <div className="space-y-2">
-                    <div className="flex justify-between items-center">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
                       <span className="text-sm text-muted-foreground">当前配额</span>
                       <span className="text-sm font-semibold text-foreground">
                         {selectedUser.trafficQuotaGb ? `${selectedUser.trafficQuotaGb} GB` : '未设置'}
@@ -737,7 +737,7 @@ export default function Users() {
                     </div>
                     {selectedUser.trafficQuotaGb && (
                       <>
-                        <div className="flex justify-between items-center">
+                        <div className="flex flex-wrap items-center justify-between gap-4">
                           <span className="text-sm text-muted-foreground">剩余配额</span>
                           <span className="text-sm font-semibold text-green-600">
                             {selectedUser.remainingQuotaGb?.toFixed(2) || '0.00'} GB
@@ -798,19 +798,19 @@ export default function Users() {
                 <h4 className="text-sm font-semibold text-foreground mb-3">数量限制</h4>
                 <div className="p-4 bg-muted rounded-xl border border-border mb-3">
                   <div className="space-y-2">
-                    <div className="flex justify-between items-center">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
                       <span className="text-sm text-muted-foreground">端口数量</span>
                       <span className="text-sm font-semibold text-foreground">
                         {selectedUser.currentPortCount || 0}{selectedUser.maxPortCount ? ` / ${selectedUser.maxPortCount}` : ''} 个
                       </span>
                     </div>
-                    <div className="flex justify-between items-center">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
                       <span className="text-sm text-muted-foreground">节点数量</span>
                       <span className="text-sm font-semibold text-foreground">
                         {selectedUser.node_count || 0}{selectedUser.maxNodeCount ? ` / ${selectedUser.maxNodeCount}` : ''} 个
                       </span>
                     </div>
-                    <div className="flex justify-between items-center">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
                       <span className="text-sm text-muted-foreground">客户端数量</span>
                       <span className="text-sm font-semibold text-foreground">
                         {selectedUser.currentClientCount || 0}{selectedUser.maxClientCount ? ` / ${selectedUser.maxClientCount}` : ''} 个
