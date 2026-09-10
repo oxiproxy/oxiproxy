@@ -83,7 +83,7 @@ export default function Layout({ children }: LayoutProps) {
   const closeMobileSidebar = () => setSidebarOpen(false);
 
   return (
-    <div className="min-h-screen bg-muted/30 text-foreground md:flex">
+    <div className="flex h-dvh overflow-hidden bg-muted/30 text-foreground">
       {sidebarOpen && (
         <button
           type="button"
@@ -95,7 +95,7 @@ export default function Layout({ children }: LayoutProps) {
 
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r bg-card transition-transform duration-200 md:static md:z-auto md:translate-x-0',
+          'fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col overflow-hidden border-r bg-card transition-transform duration-200 md:static md:z-auto md:translate-x-0',
           sidebarCollapsed ? 'md:w-20' : 'md:w-72',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         )}
@@ -124,7 +124,7 @@ export default function Layout({ children }: LayoutProps) {
           )}
         </div>
 
-        <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5" aria-label="主导航">
+        <nav className="min-h-0 flex-1 space-y-6 overflow-y-auto px-3 py-5" aria-label="主导航">
           <div>
             <p className={cn('mb-2 px-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground', sidebarCollapsed && 'sr-only')}>
               工作区
@@ -214,8 +214,8 @@ export default function Layout({ children }: LayoutProps) {
         </div>
       </aside>
 
-      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center justify-between border-b bg-card/95 px-4 backdrop-blur sm:px-6 lg:px-8">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="z-20 flex h-16 shrink-0 items-center justify-between border-b bg-card/95 px-4 backdrop-blur sm:px-6 lg:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <Button
               variant="ghost"
