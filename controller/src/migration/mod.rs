@@ -44,6 +44,8 @@ mod m20260315_000001_add_node_certificates;
 mod m20260317_000001_add_client_last_online_at;
 mod m20260317_000002_add_node_last_online_at;
 
+mod m20260910_000001_add_domain_routing;
+
 pub struct Migrator;
 
 #[async_trait::async_trait]
@@ -89,6 +91,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260315_000001_add_node_certificates::Migration),
             Box::new(m20260317_000001_add_client_last_online_at::Migration),
             Box::new(m20260317_000002_add_node_last_online_at::Migration),
+            Box::new(m20260910_000001_add_domain_routing::Migration),
         ]
     }
 }

@@ -10,6 +10,7 @@ pub struct Model {
     pub name: String,
     #[serde(rename = "type")]
     pub proxy_type: String,
+    pub domain: String,
     #[serde(rename = "localIP")]
     pub local_ip: String,
     #[serde(rename = "localPort")]

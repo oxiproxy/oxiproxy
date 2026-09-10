@@ -8,6 +8,11 @@ name = "node"
 path = "src/main.rs"
 
 [dependencies]
+hyper = { version = "1", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+
 # Shared
 common = { workspace = true }
 tokio = { workspace = true }

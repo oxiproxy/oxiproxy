@@ -84,6 +84,7 @@ export interface Proxy {
   type: string;  // 后端返回的是 "type" 不是 "proxy_type"
   localIP: string;  // 后端返回驼峰命名
   localPort: number;  // 后端返回驼峰命名
+  domain: string;
   remotePort: number;  // 后端返回驼峰命名
   enabled: boolean;
   nodeId: number | null;

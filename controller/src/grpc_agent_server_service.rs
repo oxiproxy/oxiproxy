@@ -343,6 +343,7 @@ async fn get_client_proxies_filtered(client_id: i64, filter_node_id: i64) -> Vec
             client_id: p.client_id,
             name: p.name,
             proxy_type: p.proxy_type,
+                    domain: p.domain,
             local_ip: p.local_ip,
             local_port: p.local_port as u32,
             remote_port: p.remote_port as u32,

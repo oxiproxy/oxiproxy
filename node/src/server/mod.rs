@@ -1,3 +1,4 @@
+pub mod domain_proxy;
 pub mod proxy_server;
 pub mod traffic;
 pub mod client_logs;

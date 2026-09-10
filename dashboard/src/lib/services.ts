@@ -194,6 +194,7 @@ export const proxyService = {
     type: string;
     localIP: string;
     localPort: number;
+    domain?: string;
     remotePort: number;
     nodeId?: number;
   }): Promise<ApiResponse<Proxy>> {
@@ -208,6 +209,7 @@ export const proxyService = {
       type?: string;
       localIP?: string;
       localPort?: number;
+      domain?: string;
       remotePort?: number;
       enabled?: boolean;
     }

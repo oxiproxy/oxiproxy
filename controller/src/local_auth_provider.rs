@@ -132,6 +132,7 @@ impl ClientAuthProvider for LocalControllerAuthProvider {
                 client_id: p.client_id,
                 name: p.name,
                 proxy_type: p.proxy_type,
+                    domain: p.domain,
                 local_ip: p.local_ip,
                 local_port: p.local_port,
                 remote_port: p.remote_port,

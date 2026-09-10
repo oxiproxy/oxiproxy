@@ -102,6 +102,7 @@ impl UnifiedConnection {
 
 // 代理监听器管理器
 pub struct ProxyListenerManager {
+    domains: super::domain_proxy::DomainListeners,
     // client_id -> (proxy_id, JoinHandle)
     listeners: Arc<RwLock<HashMap<String, HashMap<i64, JoinHandle<()>>>>>,
     // UDP会话管理: (client_id, proxy_id) -> (source_addr -> UdpSession)
@@ -156,6 +157,7 @@ impl ConnectionProvider {
 impl ProxyListenerManager {
     pub fn new(traffic_manager: Arc<TrafficManager>, speed_limiter: Arc<super::speed_limiter::SpeedLimiter>) -> Self {
         Self {
+            domains: super::domain_proxy::DomainListeners::default(),
             listeners: Arc::new(RwLock::new(HashMap::new())),
             udp_sessions: Arc::new(RwLock::new(HashMap::new())),
             traffic_manager,
@@ -184,6 +186,11 @@ impl ProxyListenerManager {
                 continue;
             }
 
+            if matches!(proxy.proxy_type.as_str(), "http" | "https") {
+                self.domains.start(proxy, conn_provider.clone(), self.traffic_manager.clone(), self.speed_limiter.clone()).await?;
+                continue;
+            }
+            anyhow::ensure!(matches!(proxy.proxy_type.as_str(), "tcp" | "udp"), "不支持的代理类型");
             let proxy_name = proxy.name.clone();
             let proxy_protocol: ProxyProtocol = proxy.proxy_type.clone().into();
             let proxy_protocol_str = proxy_protocol.as_str().to_uppercase();
@@ -285,10 +292,12 @@ impl ProxyListenerManager {
     // 停止客户端的所有代理监听器
     pub async fn stop_client_proxies(&self, client_id: &str) {
         let mut listeners = self.listeners.write().await;
+        self.domains.stop(client_id, None).await;
         if let Some(client_listeners) = listeners.remove(client_id) {
             info!("  [客户端 {}] 停止 {} 个代理监听器", client_id, client_listeners.len());
             for (proxy_id, handle) in client_listeners {
                 handle.abort();
+                let _ = handle.await;
                 debug!("    代理 #{} 已停止", proxy_id);
             }
         }
@@ -297,9 +306,11 @@ impl ProxyListenerManager {
     // 停止单个代理监听器（用于删除或禁用代理时）
     pub async fn stop_single_proxy(&self, client_id: &str, proxy_id: i64) {
         let mut listeners = self.listeners.write().await;
+        self.domains.stop(client_id, Some(proxy_id)).await;
         if let Some(client_listeners) = listeners.get_mut(client_id) {
             if let Some(handle) = client_listeners.remove(&proxy_id) {
                 handle.abort();
+                let _ = handle.await;
                 info!("  [客户端 {}] 停止代理 #{}", client_id, proxy_id);
             }
         }
@@ -1155,8 +1166,8 @@ async fn run_udp_proxy_listener_unified(
     }
 }
 
-async fn handle_tcp_to_tunnel_unified(
-    mut tcp_stream: TcpStream,
+pub(super) async fn handle_tcp_to_tunnel_unified<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send>(
+    tcp_stream: S,
     addr: std::net::SocketAddr,
     target_addr: String,
     proxy_name: String,
@@ -1190,7 +1201,7 @@ async fn handle_tcp_to_tunnel_unified(
     tunnel_send.write_all(target_bytes).await?;
     tunnel_send.flush().await?;
 
-    let (mut tcp_read, mut tcp_write) = tcp_stream.split();
+    let (mut tcp_read, mut tcp_write) = tokio::io::split(tcp_stream);
 
     // 使用 AtomicI64 在两个方向上统计流量（无锁，性能更好）
     let sent_stats = Arc::new(std::sync::atomic::AtomicI64::new(0));

@@ -196,6 +196,7 @@ message ProxyConfig {
   uint32 local_port = 6;
   uint32 remote_port = 7;
   bool enabled = 8;
+  string domain = 9;
 }
 
 // ===== 流量上报 =====

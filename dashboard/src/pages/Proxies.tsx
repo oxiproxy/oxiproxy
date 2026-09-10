@@ -36,6 +36,7 @@ export default function Proxies() {
     node_id: '',
     name: '',
     type: 'tcp',
+    domain: '',
     localIP: '127.0.0.1',
     localPort: '',
     remotePort: '',
@@ -125,6 +126,7 @@ export default function Proxies() {
       node_id: '',
       name: '',
       type: 'tcp',
+      domain: '',
       localIP: '127.0.0.1',
       localPort: '',
       remotePort: '',
@@ -192,15 +194,22 @@ export default function Proxies() {
     }
 
     try {
-      const response = await proxyService.batchCreateProxies({
-        client_id: formData.client_id,
-        name: formData.name,
-        type: formData.type,
-        localIP: formData.localIP,
-        localPorts: localPorts,
-        remotePorts: ports,
-        nodeId: parseInt(formData.node_id),
-      });
+      const isDomain = formData.type === 'http' || formData.type === 'https';
+      if (isDomain && (!formData.domain.trim() || ports.length !== 1 || localPorts.length !== 1)) {
+        showToast('域名代理需要填写域名、一个节点端口和一个本地端口', 'error');
+        return;
+      }
+      const response = isDomain
+        ? await proxyService.createProxy({
+            client_id: formData.client_id, name: formData.name, type: formData.type,
+            domain: formData.domain.trim(), localIP: formData.localIP,
+            localPort: localPorts[0], remotePort: ports[0], nodeId: parseInt(formData.node_id),
+          })
+        : await proxyService.batchCreateProxies({
+            client_id: formData.client_id, name: formData.name, type: formData.type,
+            localIP: formData.localIP, localPorts, remotePorts: ports,
+            nodeId: parseInt(formData.node_id),
+          });
 
       if (response.success) {
         showToast(`成功创建 ${ports.length} 个代理`, 'success');
@@ -223,6 +232,7 @@ export default function Proxies() {
       const response = await proxyService.updateProxy(editingProxy.id, {
         name: formData.name || undefined,
         type: formData.type || undefined,
+        domain: ['http', 'https'].includes(formData.type) ? formData.domain.trim() : '',
         localIP: formData.localIP || undefined,
         localPort: formData.localPort ? parseInt(formData.localPort) : undefined,
         remotePort: formData.remotePort ? parseInt(formData.remotePort) : undefined,
@@ -250,6 +260,7 @@ export default function Proxies() {
       node_id: proxy.nodeId ? proxy.nodeId.toString() : '',
       name: proxy.name,
       type: proxy.type,
+      domain: proxy.domain || '',
       localIP: proxy.localIP,
       localPort: proxy.localPort.toString(),
       remotePort: proxy.remotePort.toString(),
@@ -574,6 +585,7 @@ export default function Proxies() {
       node_id: group.nodeId ? group.nodeId.toString() : '',
       name: group.name,
       type: group.type,
+      domain: '',
       localIP: group.localIP,
       localPort: '',
       remotePort: '',
@@ -815,7 +827,7 @@ export default function Proxies() {
                         <TableCell className="whitespace-nowrap">
                           <div className="flex items-center gap-2 text-sm">
                             <span className="px-2 py-1 bg-muted text-primary rounded-lg font-mono text-xs">
-                              {getNodeIp(proxy.nodeId) ? `${getNodeIp(proxy.nodeId)}:${proxy.remotePort}` : `:${proxy.remotePort}`}
+                              {proxy.domain ? `${proxy.domain}:${proxy.remotePort}` : getNodeIp(proxy.nodeId) ? `${getNodeIp(proxy.nodeId)}:${proxy.remotePort}` : `:${proxy.remotePort}`}
                             </span>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-muted-foreground">
                               <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
@@ -1007,7 +1019,7 @@ export default function Proxies() {
                           <TableCell className="whitespace-nowrap">
                             <div className="flex items-center gap-2 text-sm">
                               <span className="px-2 py-1 bg-muted text-primary rounded-lg font-mono text-xs">
-                                :{proxy.remotePort}
+                                {proxy.domain ? `${proxy.domain}:` : ':'}{proxy.remotePort}
                               </span>
                               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-muted-foreground">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
@@ -1357,11 +1369,18 @@ export default function Proxies() {
                     <label className="block text-sm font-medium text-foreground mb-1.5">代理类型 *</label>
                     <select
                       value={formData.type}
-                      onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                      onChange={(e) => {
+                        const type = e.target.value;
+                        const port = type === 'http' ? '80' : type === 'https' ? '443' : '';
+                        setFormData({ ...formData, type, remotePort: port || formData.remotePort,
+                          localPort: formData.localPort || port });
+                      }}
                       className="w-full px-4 py-3 border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-muted/50 hover:bg-card"
                     >
                       <option value="tcp">TCP</option>
                       <option value="udp">UDP</option>
+                      {!editingGroupId && !editingProxy?.groupId && <option value="http">HTTP（Host 分流）</option>}
+                      {!editingGroupId && !editingProxy?.groupId && <option value="https">HTTPS（SNI 透传）</option>}
                     </select>
                   </div>
                   <div>
@@ -1374,6 +1393,21 @@ export default function Proxies() {
                     />
                   </div>
                 </div>
+                {['http', 'https'].includes(formData.type) && (
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-1.5">域名 *</label>
+                    <input
+                      value={formData.domain}
+                      onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
+                      placeholder="app.example.com"
+                      className="w-full px-4 py-3 border border-border rounded-xl bg-muted/50"
+                    />
+                    <p className="text-xs text-muted-foreground mt-2">
+                      将域名解析到节点 IP。同协议、不同域名可共享节点端口；不支持通配符。
+                      {formData.type === 'https' ? ' HTTPS 证书由客户端网站管理，按可见 SNI 透传，不支持 HTTP/3。' : ' 按 HTTP Host 分流，支持 WebSocket。'}
+                    </p>
+                  </div>
+                )}
                 {editingGroupId ? (
                 <div>
                   <div className="flex items-center justify-between mb-1.5">

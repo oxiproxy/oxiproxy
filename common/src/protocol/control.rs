@@ -13,6 +13,8 @@ pub struct ProxyConfig {
     pub client_id: String,
     pub name: String,
     pub proxy_type: String,
+    #[serde(default)]
+    pub domain: String,
     pub local_ip: String,
     pub local_port: u16,
     pub remote_port: u16,
