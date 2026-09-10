@@ -86,6 +86,14 @@ enum Command {
         service_name: String,
     },
 
+    /// 重启已安装的 systemd 服务（仅 Linux，沿用服务原有配置）
+    #[cfg(target_os = "linux")]
+    Restart {
+        /// systemd 服务名
+        #[arg(long, default_value = "oxiproxy-client")]
+        service_name: String,
+    },
+
     /// 以守护进程模式运行
     Daemon {
         /// Controller 地址（例如 http://controller:3100）
@@ -337,6 +345,11 @@ fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
             stop_daemon_unix(&pid_file)?;
+        }
+
+        #[cfg(target_os = "linux")]
+        Command::Restart { service_name } => {
+            common::systemd::restart_service(&service_name)?;
         }
 
         Command::Daemon {
@@ -882,6 +895,8 @@ fn update_binary(options: common::update::UpdateOptions) -> anyhow::Result<()> {
 
     println!("✓ 成功更新到版本: v{}", latest.version);
     println!("请重启 client 服务以使用新版本");
+    #[cfg(target_os = "linux")]
+    println!("systemd 安装方式：sudo ./client restart（自定义服务请加 --service-name <名称>）");
 
     Ok(())
 }
