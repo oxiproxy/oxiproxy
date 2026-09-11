@@ -577,7 +577,10 @@ fn update_binary(options: common::update::UpdateOptions) -> Result<()> {
     let asset = latest
         .assets
         .iter()
-        .find(|a| a.name.contains(bin_name) && a.name.contains(target))
+        .find(|a| {
+            let prefix = format!("{}-", bin_name);
+            a.name.starts_with(&prefix) && a.name.contains(target)
+        })
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "未找到匹配的 release asset (bin={}, target={})",

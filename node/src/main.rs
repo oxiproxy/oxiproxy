@@ -865,7 +865,10 @@ fn update_binary(options: common::update::UpdateOptions) -> anyhow::Result<()> {
     let asset = latest
         .assets
         .iter()
-        .find(|a| a.name.contains(bin_name) && a.name.contains(target))
+        .find(|a| {
+            let prefix = format!("{}-", bin_name);
+            a.name.starts_with(&prefix) && a.name.contains(target)
+        })
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "未找到匹配的 release asset (bin={}, target={})",
@@ -885,8 +888,13 @@ fn update_binary(options: common::update::UpdateOptions) -> anyhow::Result<()> {
 
     // 解压并替换二进制
     let bin_path_in_archive = format!("{}{}", bin_name, std::env::consts::EXE_SUFFIX);
-    self_update::Extract::from_source(&tmp_archive_path)
-        .extract_file(tmp_dir.path(), &bin_path_in_archive)?;
+    let extract = self_update::Extract::from_source(&tmp_archive_path);
+    if extract.extract_file(tmp_dir.path(), &bin_path_in_archive).is_err() {
+        let nested_path = format!("oxiproxy/{}", bin_path_in_archive);
+        self_update::Extract::from_source(&tmp_archive_path)
+            .extract_file(tmp_dir.path(), &nested_path)?;
+        std::fs::copy(tmp_dir.path().join(&nested_path), tmp_dir.path().join(&bin_path_in_archive))?;
+    }
 
     let new_exe = tmp_dir.path().join(&bin_path_in_archive);
     self_update::self_replace::self_replace(&new_exe)?;
