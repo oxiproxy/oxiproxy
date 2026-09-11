@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+# Renew certificates with certbot and notify nodes through the controller API.
+# All paths and hooks are configurable through the environment.
+CERTBOT=${CERTBOT:-certbot}
+RELOAD_HOOK=${RELOAD_HOOK:-:}
+NODE_PUSH_HOOK=${NODE_PUSH_HOOK:-:}
+LOG_TAG=${LOG_TAG:-oxiproxy-acme}
+
+log() { logger -t "$LOG_TAG" -- "$*" 2>/dev/null || echo "$*"; }
+
+if "$CERTBOT" renew --quiet --deploy-hook "$RELOAD_HOOK"; then
+  # A deploy hook is only run when a certificate was renewed.  Keep node
+  # delivery separate so a transient node cannot make renewal fail.
+  if ! "$NODE_PUSH_HOOK"; then
+    log "certificate renewed but node push hook failed"
+    exit 1
+  fi
+else
+  log "certbot renewal failed"
+  exit 1
+fi

@@ -1,0 +1,2 @@
+# Renew ACME certificates twice daily; certbot itself applies its renewal window.
+17 */12 * * * root CERTBOT=/usr/bin/certbot RELOAD_HOOK=/usr/local/sbin/oxiproxy-cert-reload NODE_PUSH_HOOK=/usr/local/sbin/oxiproxy-cert-push /usr/local/sbin/oxiproxy-acme-renew

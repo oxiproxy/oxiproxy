@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+# Optional operator supplied node hot-update hook.  Keeping this executable
+# and idempotent allows installations to wire their node transport safely.
+if [ -n "${OXIPROXY_NODE_PUSH_COMMAND:-}" ]; then
+  sh -c "$OXIPROXY_NODE_PUSH_COMMAND"
+fi
