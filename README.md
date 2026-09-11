@@ -56,6 +56,18 @@
 curl -fsSL https://raw.githubusercontent.com/oxiproxy/oxiproxy/master/install.sh | bash
 ```
 
+国内网络也可以使用 jsDelivr 镜像仓库：
+
+```bash
+curl -fsSL https://cdn.jsdelivr.net/gh/oxiproxy/oxiproxy@master/install.sh | bash
+```
+
+如果 jsDelivr 不可用，可使用 GitHub 代理：
+
+```bash
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/oxiproxy/oxiproxy/master/install.sh | bash
+```
+
 选择安装 `controller`，安装完成后启动：
 
 ```bash
