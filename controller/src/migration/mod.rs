@@ -45,6 +45,7 @@ mod m20260317_000001_add_client_last_online_at;
 mod m20260317_000002_add_node_last_online_at;
 
 mod m20260910_000001_add_domain_routing;
+mod m20260911_000001_add_acme_config;
 
 pub struct Migrator;
 
@@ -92,6 +93,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260317_000001_add_client_last_online_at::Migration),
             Box::new(m20260317_000002_add_node_last_online_at::Migration),
             Box::new(m20260910_000001_add_domain_routing::Migration),
+            Box::new(m20260911_000001_add_acme_config::Migration),
         ]
     }
 }

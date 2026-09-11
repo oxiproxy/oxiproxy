@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+# Reload the controller and any local TLS terminator after renewal.
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl reload oxiproxy-controller 2>/dev/null || systemctl restart oxiproxy-controller 2>/dev/null || true
+fi
