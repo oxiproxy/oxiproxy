@@ -1399,11 +1399,12 @@ export default function Proxies() {
                     <input
                       value={formData.domain}
                       onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
-                      placeholder="app.example.com"
+                      placeholder="app.example.com 或 *.example.com"
                       className="w-full px-4 py-3 border border-border rounded-xl bg-muted/50"
                     />
                     <p className="text-xs text-muted-foreground mt-2">
-                      将域名解析到节点 IP。同协议、不同域名可共享节点端口；不支持通配符。
+                      将域名解析到节点 IP。支持 *.example.com，匹配一级及更深子域名，不含根域名。
+                      同协议可共享节点端口：精确域名优先，其次匹配后缀最长的通配符；重复规则不可用。
                       {formData.type === 'https' ? ' HTTPS 证书由客户端网站管理，按可见 SNI 透传，不支持 HTTP/3。' : ' 按 HTTP Host 分流，支持 WebSocket。'}
                     </p>
                   </div>

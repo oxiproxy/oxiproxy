@@ -800,7 +800,7 @@ cd dashboard && bun run lint                           # 前端检查
 - HTTP 支持 HTTP/1.0、HTTP/1.1 和 WebSocket 升级，逐个请求按 Host 选路；同一长连接切换 Host 也会重新选择 Client。保留 Host，处理逐跳头，流式传输请求和响应。未知域名返回 404，无效 Host 返回 400，已匹配但离线的 Client 返回 503，上游连接失败返回 502。
 - HTTPS 从 TLS ClientHello 的可见 SNI 选择 Client，原样透传握手及后续加密数据。网站证书和私钥始终由 Client 上的网站管理；Node 不终止网站 TLS。支持握手跨 TCP 数据包及 TLS 记录分片。HTTPS 内部的 HTTP/2 等应用协议由客户端网站决定。每条 TLS 连接固定到最初 SNI 对应的 Client，无法读取加密后的 Host / :authority；不同 Client 共用覆盖多个域名的证书时，需避免浏览器 HTTP/2 跨域连接合并（例如使用各自的单域名证书）。
 - 同一节点、同一端口仅允许同协议的不同域名共享。相同域名可分别配置在 80 和 443；禁用的规则不占用路由，重新启用时再次检查冲突。停止一个 Client 不会停止其他 Client 的共享监听，最后一条路由移除后释放端口。
-- 域名不区分大小写，接受末尾单个点；仅支持精确域名，国际化域名使用 Punycode，不支持通配符、路径路由或代理组批量配置。域名代理仍按代理条目计入已有配额。
+- 域名不区分大小写，接受末尾单个点；支持精确域名和开头为 `*.` 的通配符域名，国际化域名使用 Punycode，不支持路径路由或代理组批量配置。域名代理仍按代理条目计入已有配额。
 - HTTPS 缺少 SNI、SNI 未匹配或无效握手会关闭连接，无默认回退 Client。ECH 隐藏的真实域名无法用于分流。此功能不提供 UDP 443 / HTTP/3 分流，也不提供明文 HTTP/2 入口。
 - 初始 HTTP 请求头等待上限为 10 秒、缓冲上限为 32 KiB；TLS ClientHello 等待上限为 10 秒、读取上限为 64 KiB；每个共享端口最多同时接收 1024 条连接。
 
@@ -821,3 +821,14 @@ sudo ./client restart --service-name my-client
 ```
 
 命令使用 systemd 重启服务，沿用 unit 中的工作目录、用户和启动参数。服务不存在、systemctl 不可用或权限不足时返回非零退出码。此命令仅适用于 Linux systemd 服务；手动 `daemon` 模式不适用。更新二进制后执行该命令即可让服务加载新版本，再用对应组件的 `status` 命令查看状态。Node 和 Client 的重启无需重新传入 Token、Controller 地址或 TLS 参数，均沿用已安装服务的配置。
+
+#### 通配符域名
+
+在「代理」→「新建代理」选择 HTTP 或 HTTPS，域名可填写 `*.yunnet.top`。
+例如 Client1 使用 `*.yunnet.top`，Client2 使用 `nas.yunnet.top`，两条规则选择相同 Node、相同协议和节点端口：`xxx.yunnet.top` 进入 Client1，`nas.yunnet.top` 进入 Client2。
+
+- 精确域名优先，其次是后缀最长的通配符，与创建顺序无关。例如 `*.home.yunnet.top` 优先于 `*.yunnet.top`。
+- 通配符匹配一级及更深子域名，但不匹配根域名 `yunnet.top`；根域名需要单独创建规则。仅支持开头的一个 `*.`。
+- 同一 Node、同一端口不允许重复的有效域名规则（忽略大小写和末尾的点），也不允许混用 HTTP、HTTPS 或普通 TCP/UDP 监听。
+- 精确规则与通配符可以共存；已匹配的 Client 离线时不会回退到其他 Client。删除或禁用更具体的规则后，其域名可能由剩余通配符接管。
+- DNS 需要将对应域名或泛解析指向 Node。HTTPS 证书仍由 Client 网站提供；路由支持多级子域名不代表通配符证书也覆盖多级子域名。

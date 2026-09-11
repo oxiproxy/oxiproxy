@@ -1,14 +1,17 @@
 //! Shared HTTP/1 Host routing and TLS SNI passthrough. No website keys are held here.
 use super::{
-    proxy_server::{handle_tcp_to_tunnel_unified, ConnectionProvider},
+    proxy_server::{ConnectionProvider, handle_tcp_to_tunnel_unified},
     speed_limiter::SpeedLimiter,
     traffic::TrafficManager,
 };
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{Result, anyhow, bail, ensure};
 use bytes::Bytes;
-use common::{domain::normalize_domain, protocol::control::ProxyConfig};
-use http_body_util::{combinators::UnsyncBoxBody, BodyExt, Full};
-use hyper::{body::Incoming, header, Request, Response, StatusCode};
+use common::{
+    domain::{find_route, normalize_domain, normalize_pattern},
+    protocol::control::ProxyConfig,
+};
+use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
+use hyper::{Request, Response, StatusCode, body::Incoming, header};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use std::{
     collections::HashMap, convert::Infallible, io::Cursor, net::SocketAddr, sync::Arc,
@@ -56,7 +59,7 @@ impl DomainListeners {
         traffic: Arc<TrafficManager>,
         limiter: Arc<SpeedLimiter>,
     ) -> Result<()> {
-        config.domain = normalize_domain(&config.domain).map_err(|e| anyhow!(e))?;
+        config.domain = normalize_pattern(&config.domain).map_err(|e| anyhow!(e))?;
         let mut listeners = self.0.lock().await;
         if let Some(listener) = listeners.get(&config.remote_port) {
             ensure!(listener.kind == config.proxy_type, "共享端口的协议必须一致");
@@ -197,10 +200,7 @@ async fn read_sni(stream: &mut TcpStream) -> Result<(String, Vec<u8>)> {
 
 async fn serve_tls(mut stream: TcpStream, addr: SocketAddr, routes: Routes) -> Result<()> {
     let (domain, prefix) = tokio::time::timeout(HEADER_TIMEOUT, read_sni(&mut stream)).await??;
-    let route = routes
-        .read()
-        .await
-        .get(&domain)
+    let route = find_route(&*routes.read().await, &domain)
         .cloned()
         .ok_or_else(|| anyhow!("SNI 未匹配路由"))?;
     // Replay every sniffed byte, including bytes following ClientHello in the same read.
@@ -286,7 +286,7 @@ async fn http_request(
     if request.method() == hyper::Method::CONNECT {
         return Ok(response(StatusCode::METHOD_NOT_ALLOWED));
     }
-    let route = match routes.read().await.get(&domain).cloned() {
+    let route = match find_route(&*routes.read().await, &domain).cloned() {
         Some(route) => route,
         None => return Ok(response(StatusCode::NOT_FOUND)),
     };

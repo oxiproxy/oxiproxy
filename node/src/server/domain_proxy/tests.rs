@@ -170,13 +170,22 @@ async fn backend(label: &'static str) -> (u16, JoinHandle<()>) {
 
 #[tokio::test]
 async fn http_routes_each_keepalive_request_and_preserves_bodies_and_upgrades() {
+    check_http_routes(false).await;
+}
+
+#[tokio::test]
+async fn http_wildcard_and_exact_routes_share_listener() {
+    check_http_routes(true).await;
+}
+
+async fn check_http_routes(wildcard: bool) {
     tokio::time::timeout(Duration::from_secs(15), async {
         let manager = DomainListeners::default();
         let (provider, traffic, limiter) = fixture();
         let port = port().await;
         let (a, task_a) = backend("A").await;
         let (b, task_b) = backend("B").await;
-        for (id, backend, domain) in [(1, a, "a.test"), (2, b, "b.test")] {
+        for (id, backend, domain) in [(2, b, "b.test"), (1, a, if wildcard { "*.test" } else { "a.test" })] {
             manager
                 .start(
                     config(id, port, backend, "http", domain),
@@ -189,7 +198,7 @@ async fn http_routes_each_keepalive_request_and_preserves_bodies_and_upgrades() 
         }
         assert!(manager
             .start(
-                config(3, port, b, "http", "A.TEST."),
+                config(3, port, b, "http", if wildcard { "*.TEST." } else { "A.TEST." }),
                 provider.clone(),
                 traffic.clone(),
                 limiter.clone()
@@ -215,6 +224,7 @@ async fn http_routes_each_keepalive_request_and_preserves_bodies_and_upgrades() 
         for (host, expected) in [
             ("A.TEST.:80", "A:A.TEST.:80:hello"),
             ("b.test", "B:b.test:hello"),
+            (if wildcard { "deep.a.test" } else { "a.test" }, if wildcard { "A:deep.a.test:hello" } else { "A:a.test:hello" }),
         ] {
             let req = Request::post("/body")
                 .header("Host", host)
@@ -228,7 +238,7 @@ async fn http_routes_each_keepalive_request_and_preserves_bodies_and_upgrades() 
             );
         }
         let unknown = Request::get("/")
-            .header("Host", "unknown.test")
+            .header("Host", "unknown.example")
             .body(Full::new(Bytes::new()))
             .unwrap();
         assert_eq!(
@@ -302,6 +312,15 @@ fn client_hello(domain: &str, sni: bool) -> Vec<u8> {
 
 #[tokio::test]
 async fn tls_fragmented_clienthello_routes_and_replays_exact_bytes() {
+    check_tls_routes(false).await;
+}
+
+#[tokio::test]
+async fn tls_wildcard_and_exact_routes_replay_clienthello() {
+    check_tls_routes(true).await;
+}
+
+async fn check_tls_routes(wildcard: bool) {
     tokio::time::timeout(Duration::from_secs(15), async {
         let manager = DomainListeners::default();
         let (provider, traffic, limiter) = fixture();
@@ -315,7 +334,11 @@ async fn tls_fragmented_clienthello_routes_and_replays_exact_bytes() {
                         port,
                         backend.local_addr().unwrap().port(),
                         "https",
-                        domain,
+                        if wildcard && id == 1 {
+                            "*.test"
+                        } else {
+                            domain
+                        },
                     ),
                     provider.clone(),
                     traffic.clone(),
@@ -353,7 +376,7 @@ async fn tls_fragmented_clienthello_routes_and_replays_exact_bytes() {
             assert_eq!(result, domain);
             peer.await.unwrap();
         }
-        for (domain, sni) in [("unknown.test", true), ("a.test", false)] {
+        for (domain, sni) in [("unknown.example", true), ("a.test", false)] {
             let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
             stream.write_all(&client_hello(domain, sni)).await.unwrap();
             let mut byte = [0];
