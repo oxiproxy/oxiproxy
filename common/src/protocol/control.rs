@@ -15,6 +15,10 @@ pub struct ProxyConfig {
     pub proxy_type: String,
     #[serde(default)]
     pub domain: String,
+    #[serde(default)]
+    pub upstream_url: String,
+    #[serde(default)]
+    pub user_id: Option<i64>,
     pub local_ip: String,
     pub local_port: u16,
     pub remote_port: u16,
@@ -67,6 +71,16 @@ pub trait ProxyControl: Send + Sync {
     /// 启动指定客户端的指定代理监听器
     async fn start_proxy(&self, client_id: &str, proxy_id: i64) -> Result<()>;
 
+    /// Start a Node-owned upstream without a Client tunnel.
+    async fn start_direct_proxy(&self, _config: ProxyConfig) -> Result<()> {
+        anyhow::bail!("节点不支持公网直连代理，请升级 Node")
+    }
+
+    /// Reconcile all Node-owned upstreams after registration/reconnection.
+    async fn sync_direct_proxies(&self, _configs: Vec<ProxyConfig>) -> Result<()> {
+        anyhow::bail!("节点不支持公网直连代理，请升级 Node")
+    }
+
     /// 停止指定客户端的指定代理监听器
     async fn stop_proxy(&self, client_id: &str, proxy_id: i64) -> Result<()>;
 
@@ -81,4 +95,39 @@ pub trait ProxyControl: Send + Sync {
 
     /// 更新证书（热更新）
     async fn update_certificate(&self, cert_pem: String, key_pem: String) -> Result<()>;
+}
+
+impl From<crate::grpc::oxiproxy::ProxyConfig> for ProxyConfig {
+    fn from(p: crate::grpc::oxiproxy::ProxyConfig) -> Self {
+        Self {
+            proxy_id: p.proxy_id,
+            client_id: p.client_id,
+            name: p.name,
+            proxy_type: p.proxy_type,
+            domain: p.domain,
+            upstream_url: p.upstream_url,
+            user_id: p.user_id,
+            local_ip: p.local_ip,
+            local_port: p.local_port as u16,
+            remote_port: p.remote_port as u16,
+            enabled: p.enabled,
+        }
+    }
+}
+impl From<ProxyConfig> for crate::grpc::oxiproxy::ProxyConfig {
+    fn from(p: ProxyConfig) -> Self {
+        Self {
+            proxy_id: p.proxy_id,
+            client_id: p.client_id,
+            name: p.name,
+            proxy_type: p.proxy_type,
+            domain: p.domain,
+            upstream_url: p.upstream_url,
+            user_id: p.user_id,
+            local_ip: p.local_ip,
+            local_port: p.local_port as u32,
+            remote_port: p.remote_port as u32,
+            enabled: p.enabled,
+        }
+    }
 }

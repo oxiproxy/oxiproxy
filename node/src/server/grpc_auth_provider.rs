@@ -92,10 +92,13 @@ impl ClientAuthProvider for GrpcAuthProvider {
         debug!("gRPC 检查客户端 #{} 流量限制", client_id);
 
         let msg = oxiproxy::AgentServerMessage {
-            payload: Some(AgentPayload::CheckTrafficLimit(oxiproxy::CheckTrafficLimitRequest {
-                request_id: request_id.clone(),
-                client_id,
-            })),
+            payload: Some(AgentPayload::CheckTrafficLimit(
+                oxiproxy::CheckTrafficLimitRequest {
+                    request_id: request_id.clone(),
+                    client_id,
+                    proxy_id: None,
+                },
+            )),
         };
 
         self.sender.send(msg).await
@@ -111,6 +114,28 @@ impl ClientAuthProvider for GrpcAuthProvider {
                 })
             }
             _ => Err(anyhow::anyhow!("收到意外的响应类型")),
+        }
+    }
+
+    async fn check_direct_proxy_limit(&self, proxy_id: i64) -> Result<TrafficLimitResponse> {
+        let (request_id, rx) = self.pending.register().await;
+        self.sender
+            .send(oxiproxy::AgentServerMessage {
+                payload: Some(AgentPayload::CheckTrafficLimit(
+                    oxiproxy::CheckTrafficLimitRequest {
+                        request_id,
+                        client_id: 0,
+                        proxy_id: Some(proxy_id),
+                    },
+                )),
+            })
+            .await?;
+        match PendingRequests::wait(rx, Duration::from_secs(10)).await? {
+            ControllerResponse::TrafficLimit(response) => Ok(TrafficLimitResponse {
+                exceeded: response.exceeded,
+                reason: response.reason,
+            }),
+            _ => anyhow::bail!("收到意外的配额检查响应"),
         }
     }
 
@@ -139,6 +164,8 @@ impl ClientAuthProvider for GrpcAuthProvider {
                     name: p.name,
                     proxy_type: p.proxy_type,
                     domain: p.domain,
+                    upstream_url: p.upstream_url,
+                    user_id: p.user_id,
                     local_ip: p.local_ip,
                     local_port: p.local_port as u16,
                     remote_port: p.remote_port as u16,

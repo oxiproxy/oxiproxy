@@ -422,7 +422,11 @@ pub async fn update_user(
 }
 
 /// DELETE /api/users/:id - Delete a user (admin only)
-pub async fn delete_user(Extension(auth_user_opt): Extension<Option<AuthUser>>, Path(id): Path<i64>) -> impl IntoResponse {
+pub async fn delete_user(
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
+    Extension(app_state): Extension<AppState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
     let auth_user = match auth_user_opt {
         Some(user) => user,
         None => return (StatusCode::UNAUTHORIZED, ApiResponse::<&str>::error("Not authenticated".to_string())),
@@ -431,6 +435,26 @@ pub async fn delete_user(Extension(auth_user_opt): Extension<Option<AuthUser>>, 
         return (StatusCode::FORBIDDEN, ApiResponse::<&str>::error("需要管理员权限".to_string()));
     }
     let db = get_connection().await;
+
+    let direct_proxies = match crate::entity::Proxy::find()
+        .filter(crate::entity::proxy::Column::ClientId.is_null())
+        .filter(crate::entity::proxy::Column::UserId.eq(id))
+        .all(db)
+        .await
+    {
+        Ok(proxies) => proxies,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ApiResponse::<&str>::error(error.to_string()),
+            )
+        }
+    };
+    for proxy in &direct_proxies {
+        if let Err(error) = app_state.proxy_control.stop_proxy("", proxy.id).await {
+            tracing::warn!(%error, proxy_id = proxy.id, "删除用户时停止公网代理失败");
+        }
+    }
 
     match User::delete_by_id(id).exec(db).await {
         Ok(_) => (StatusCode::OK, ApiResponse::success("User deleted successfully")),

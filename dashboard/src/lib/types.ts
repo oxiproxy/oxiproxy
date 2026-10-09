@@ -79,7 +79,9 @@ export interface ClientTrafficInfo {
 // 代理类型
 export interface Proxy {
   id: number;
-  client_id: string;
+  client_id: string | null;
+  userId: number | null;
+  upstreamUrl: string;
   name: string;
   type: string;  // 后端返回的是 "type" 不是 "proxy_type"
   localIP: string;  // 后端返回驼峰命名

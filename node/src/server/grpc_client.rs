@@ -401,11 +401,22 @@ impl AgentGrpcClient {
 
                 // Controller 主动下发的指令
                 ControllerPayload::StartProxy(cmd) => {
-                    let _ = cmd_tx.send(ControllerCommand::StartProxy {
-                        request_id: cmd.request_id,
-                        client_id: cmd.client_id,
-                        proxy_id: cmd.proxy_id,
-                    }).await;
+                    let _ = cmd_tx
+                        .send(ControllerCommand::StartProxy {
+                            request_id: cmd.request_id,
+                            client_id: cmd.client_id,
+                            proxy_id: cmd.proxy_id,
+                            config: cmd.config.map(Into::into),
+                        })
+                        .await;
+                }
+
+                ControllerPayload::SyncDirectProxies(cmd) => {
+                    let _ = cmd_tx
+                        .send(ControllerCommand::SyncDirectProxies {
+                            configs: cmd.proxies.into_iter().map(Into::into).collect(),
+                        })
+                        .await;
                 }
 
                 ControllerPayload::StopProxy(cmd) => {
@@ -528,10 +539,14 @@ impl AgentGrpcClient {
 
 /// Controller 下发的命令
 pub enum ControllerCommand {
+    SyncDirectProxies {
+        configs: Vec<common::protocol::control::ProxyConfig>,
+    },
     StartProxy {
         request_id: String,
         client_id: String,
         proxy_id: i64,
+        config: Option<common::protocol::control::ProxyConfig>,
     },
     StopProxy {
         request_id: String,
@@ -579,6 +594,61 @@ pub async fn handle_controller_commands(
     speed_limiter: Arc<super::speed_limiter::SpeedLimiter>,
 ) {
     while let Some(cmd) = cmd_rx.recv().await {
+        // Keep direct mutations in stream order: the reconnect snapshot must
+        // complete before a later create/update/delete can change its routes.
+        let direct = matches!(
+            &cmd,
+            ControllerCommand::SyncDirectProxies { .. }
+                | ControllerCommand::StartProxy {
+                    config: Some(_),
+                    ..
+                }
+        ) || matches!(&cmd, ControllerCommand::StopProxy { client_id, .. } if client_id.is_empty());
+        if direct {
+            let (request_id, result) = match cmd {
+                ControllerCommand::SyncDirectProxies { configs } => {
+                    (None, proxy_control.sync_direct_proxies(configs).await)
+                }
+                ControllerCommand::StartProxy {
+                    request_id,
+                    config: Some(config),
+                    ..
+                } => (
+                    Some(request_id),
+                    proxy_control.start_direct_proxy(config).await,
+                ),
+                ControllerCommand::StopProxy {
+                    request_id,
+                    client_id,
+                    proxy_id,
+                } => (
+                    Some(request_id),
+                    proxy_control.stop_proxy(&client_id, proxy_id).await,
+                ),
+                _ => unreachable!(),
+            };
+            if let Some(request_id) = request_id {
+                let ack = match result {
+                    Ok(()) => oxiproxy::CommandAck {
+                        success: true,
+                        error: None,
+                    },
+                    Err(error) => oxiproxy::CommandAck {
+                        success: false,
+                        error: Some(error.to_string()),
+                    },
+                };
+                let _ = grpc_client
+                    .send_response(oxiproxy::AgentServerResponse {
+                        request_id,
+                        result: Some(AgentResult::CommandAck(ack)),
+                    })
+                    .await;
+            } else if let Err(error) = result {
+                tracing::error!(%error, "同步公网代理失败");
+            }
+            continue;
+        }
         let grpc = grpc_client.clone();
         let control = proxy_control.clone();
         let tm = tunnel_manager.clone();
@@ -586,7 +656,8 @@ pub async fn handle_controller_commands(
 
         tokio::spawn(async move {
             match cmd {
-                ControllerCommand::StartProxy { request_id, client_id, proxy_id } => {
+                ControllerCommand::SyncDirectProxies { .. } => unreachable!(),
+                ControllerCommand::StartProxy { request_id, client_id, proxy_id, .. } => {
                     let result = control.start_proxy(&client_id, proxy_id).await;
                     let ack = match result {
                         Ok(()) => oxiproxy::CommandAck { success: true, error: None },

@@ -1,17 +1,17 @@
 //! Shared HTTP/1 Host routing and TLS SNI passthrough. No website keys are held here.
 use super::{
-    proxy_server::{ConnectionProvider, handle_tcp_to_tunnel_unified},
+    proxy_server::{handle_tcp_to_tunnel_unified, ConnectionProvider},
     speed_limiter::SpeedLimiter,
     traffic::TrafficManager,
 };
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{anyhow, bail, ensure, Result};
 use bytes::Bytes;
 use common::{
     domain::{find_route, normalize_domain, normalize_pattern},
     protocol::control::ProxyConfig,
 };
-use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
-use hyper::{Request, Response, StatusCode, body::Incoming, header};
+use http_body_util::{combinators::UnsyncBoxBody, BodyExt, Full};
+use hyper::{body::Incoming, header, Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use std::{
     collections::HashMap, convert::Infallible, io::Cursor, net::SocketAddr, sync::Arc,
@@ -32,6 +32,7 @@ type Body = UnsyncBoxBody<Bytes, hyper::Error>;
 #[derive(Clone)]
 struct Route {
     config: ProxyConfig,
+    upstream: Option<reqwest::Url>,
     provider: ConnectionProvider,
     traffic: Arc<TrafficManager>,
     limiter: Arc<SpeedLimiter>,
@@ -52,6 +53,15 @@ impl Drop for Listener {
 pub struct DomainListeners(Mutex<HashMap<u16, Listener>>);
 
 impl DomainListeners {
+    pub async fn active_count(&self) -> usize {
+        let listeners = self.0.lock().await;
+        let mut count = 0;
+        for listener in listeners.values() {
+            count += listener.routes.read().await.len();
+        }
+        count
+    }
+
     pub async fn start(
         &self,
         mut config: ProxyConfig,
@@ -60,6 +70,16 @@ impl DomainListeners {
         limiter: Arc<SpeedLimiter>,
     ) -> Result<()> {
         config.domain = normalize_pattern(&config.domain).map_err(|e| anyhow!(e))?;
+        let upstream = if config.upstream_url.is_empty() {
+            ensure!(!config.client_id.is_empty(), "隧道代理缺少 Client");
+            None
+        } else {
+            ensure!(config.client_id.is_empty(), "公网直连代理不能绑定 Client");
+            Some(common::upstream::parse_upstream(
+                &config.proxy_type,
+                &config.upstream_url,
+            )?)
+        };
         let mut listeners = self.0.lock().await;
         if let Some(listener) = listeners.get(&config.remote_port) {
             ensure!(listener.kind == config.proxy_type, "共享端口的协议必须一致");
@@ -75,6 +95,7 @@ impl DomainListeners {
                 config.domain.clone(),
                 Route {
                     config,
+                    upstream,
                     provider,
                     traffic,
                     limiter,
@@ -91,6 +112,7 @@ impl DomainListeners {
             config.domain.clone(),
             Route {
                 config,
+                upstream,
                 provider,
                 traffic,
                 limiter,
@@ -157,6 +179,35 @@ async fn forward<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send>
     addr: SocketAddr,
     route: Route,
 ) -> Result<()> {
+    if let Some(upstream) = &route.upstream {
+        let host = upstream
+            .host_str()
+            .ok_or_else(|| anyhow!("目标缺少主机"))?
+            .trim_start_matches('[')
+            .trim_end_matches(']');
+        let port = upstream
+            .port_or_known_default()
+            .ok_or_else(|| anyhow!("目标缺少端口"))?;
+        let socket =
+            tokio::time::timeout(HEADER_TIMEOUT, TcpStream::connect((host, port))).await??;
+        if route.config.proxy_type == "http" && upstream.scheme() == "https" {
+            let roots =
+                rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+            let connector = tokio_rustls::TlsConnector::from(Arc::new(tls));
+            let server_name = rustls::pki_types::ServerName::try_from(host.to_owned())?;
+            let socket =
+                tokio::time::timeout(HEADER_TIMEOUT, connector.connect(server_name, socket))
+                    .await??;
+            return copy_direct(stream, socket, &route).await;
+        }
+        return copy_direct(stream, socket, &route).await;
+    }
     let config = route.config;
     handle_tcp_to_tunnel_unified(
         stream,
@@ -170,6 +221,51 @@ async fn forward<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send>
         route.limiter,
     )
     .await
+}
+
+async fn copy_direct<A, B>(downstream: A, upstream: B, route: &Route) -> Result<()>
+where
+    A: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+    B: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+{
+    use std::sync::atomic::{AtomicI64, Ordering};
+    use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+    async fn copy<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
+        mut read: R,
+        mut write: W,
+        count: &AtomicI64,
+        limiter: &SpeedLimiter,
+    ) -> Result<()> {
+        let mut buf = [0u8; 32768];
+        loop {
+            let n = read.read(&mut buf).await?;
+            if n == 0 {
+                return Ok(write.shutdown().await?);
+            }
+            limiter.consume(n).await;
+            write.write_all(&buf[..n]).await?;
+            count.fetch_add(n as i64, Ordering::Relaxed);
+        }
+    }
+    let (down_read, down_write) = tokio::io::split(downstream);
+    let (up_read, up_write) = tokio::io::split(upstream);
+    let sent = AtomicI64::new(0);
+    let received = AtomicI64::new(0);
+    let result = tokio::try_join!(
+        copy(down_read, up_write, &sent, &route.limiter),
+        copy(up_read, down_write, &received, &route.limiter),
+    );
+    route
+        .traffic
+        .record_traffic(
+            route.config.proxy_id,
+            0,
+            route.config.user_id,
+            sent.load(Ordering::Relaxed),
+            received.load(Ordering::Relaxed),
+        )
+        .await;
+    result.map(|_| ())
 }
 
 // rustls parses fragmented TLS records and ClientHello extensions without terminating TLS.
@@ -203,6 +299,15 @@ async fn serve_tls(mut stream: TcpStream, addr: SocketAddr, routes: Routes) -> R
     let route = find_route(&*routes.read().await, &domain)
         .cloned()
         .ok_or_else(|| anyhow!("SNI 未匹配路由"))?;
+    if route.upstream.is_some() {
+        ensure!(
+            route
+                .provider
+                .direct_is_allowed(route.config.proxy_id)
+                .await?,
+            "公网代理流量配额已用尽"
+        );
+    }
     // Replay every sniffed byte, including bytes following ClientHello in the same read.
     let (read, write) = stream.into_split();
     forward(
@@ -290,8 +395,19 @@ async fn http_request(
         Some(route) => route,
         None => return Ok(response(StatusCode::NOT_FOUND)),
     };
-    if !route.provider.is_online(&route.config.client_id).await {
+    if route.upstream.is_none() && !route.provider.is_online(&route.config.client_id).await {
         return Ok(response(StatusCode::SERVICE_UNAVAILABLE));
+    }
+    if route.upstream.is_some() {
+        match route
+            .provider
+            .direct_is_allowed(route.config.proxy_id)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return Ok(response(StatusCode::FORBIDDEN)),
+            Err(_) => return Ok(response(StatusCode::SERVICE_UNAVAILABLE)),
+        }
     }
     let upgrade = request
         .headers()
@@ -316,6 +432,30 @@ async fn http_request(
     let host = request.headers()[header::HOST].clone();
     strip_hop_headers(request.headers_mut(), upgrade);
     request.headers_mut().insert(header::HOST, host);
+    if let Some(upstream) = &route.upstream {
+        let original_host = request.headers()[header::HOST].clone();
+        let mut authority = upstream
+            .host_str()
+            .ok_or_else(|| anyhow!("目标缺少主机"))?
+            .to_owned();
+        if let Some(port) = upstream.port() {
+            authority.push_str(&format!(":{port}"));
+        }
+        request
+            .headers_mut()
+            .insert(header::HOST, authority.parse()?);
+        request
+            .headers_mut()
+            .insert("x-forwarded-host", original_host);
+        request
+            .headers_mut()
+            .insert("x-forwarded-for", addr.ip().to_string().parse()?);
+        request.headers_mut().insert(
+            "x-forwarded-proto",
+            header::HeaderValue::from_static("http"),
+        );
+        request.headers_mut().remove("forwarded");
+    }
     if !upgrade {
         request.headers_mut().insert(
             header::CONNECTION,

@@ -114,6 +114,7 @@ pub struct ProxyListenerManager {
 /// Connection provider for proxy listeners
 #[derive(Clone)]
 pub struct ConnectionProvider {
+    auth_provider: Option<Arc<dyn common::protocol::auth::ClientAuthProvider>>,
     quic_connections: Arc<RwLock<HashMap<String, Arc<quinn::Connection>>>>,
     tunnel_connections: Arc<RwLock<HashMap<String, Arc<Box<dyn TunnelConnection>>>>>,
 }
@@ -124,9 +125,26 @@ impl ConnectionProvider {
         tunnel_connections: Arc<RwLock<HashMap<String, Arc<Box<dyn TunnelConnection>>>>>,
     ) -> Self {
         Self {
+            auth_provider: None,
             quic_connections,
             tunnel_connections,
         }
+    }
+
+    pub fn with_auth_provider(
+        mut self,
+        auth: Arc<dyn common::protocol::auth::ClientAuthProvider>,
+    ) -> Self {
+        self.auth_provider = Some(auth);
+        self
+    }
+
+    pub async fn direct_is_allowed(&self, proxy_id: i64) -> Result<bool> {
+        let auth = self
+            .auth_provider
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("缺少公网代理配额检查服务"))?;
+        Ok(!auth.check_direct_proxy_limit(proxy_id).await?.exceeded)
     }
 
     /// Get a unified connection for a client
@@ -155,7 +173,20 @@ impl ConnectionProvider {
 }
 
 impl ProxyListenerManager {
-    pub fn new(traffic_manager: Arc<TrafficManager>, speed_limiter: Arc<super::speed_limiter::SpeedLimiter>) -> Self {
+    pub async fn active_count(&self) -> usize {
+        let listeners = self.listeners.read().await;
+        let port_proxies = listeners
+            .values()
+            .flat_map(|proxies| proxies.values())
+            .filter(|task| !task.is_finished())
+            .count();
+        port_proxies + self.domains.active_count().await
+    }
+
+    pub fn new(
+        traffic_manager: Arc<TrafficManager>,
+        speed_limiter: Arc<super::speed_limiter::SpeedLimiter>,
+    ) -> Self {
         Self {
             domains: super::domain_proxy::DomainListeners::default(),
             listeners: Arc::new(RwLock::new(HashMap::new())),

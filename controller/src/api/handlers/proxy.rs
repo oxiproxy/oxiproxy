@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, NotSet, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, Condition, EntityTrait, NotSet, QueryFilter, Set};
 use serde::Deserialize;
 use tracing::info;
 use uuid::Uuid;
@@ -14,15 +14,18 @@ use super::ApiResponse;
 
 #[derive(Deserialize)]
 pub struct CreateProxyRequest {
-    pub client_id: String,  // 改为 String 以兼容前端
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default, rename = "upstreamUrl")]
+    pub upstream_url: String,
     pub name: String,
     #[serde(rename = "type")]
     pub proxy_type: String,
     #[serde(default)]
     pub domain: String,
-    #[serde(rename = "localIP")]
+    #[serde(default, rename = "localIP")]
     pub local_ip: String,
-    #[serde(rename = "localPort")]
+    #[serde(default, rename = "localPort")]
     pub local_port: u16,
     #[serde(rename = "remotePort")]
     pub remote_port: u16,
@@ -36,6 +39,8 @@ pub struct UpdateProxyRequest {
     #[serde(rename = "type")]
     pub proxy_type: Option<String>,
     pub domain: Option<String>,
+    #[serde(rename = "upstreamUrl")]
+    pub upstream_url: Option<String>,
     #[serde(rename = "localIP")]
     pub local_ip: Option<String>,
     #[serde(rename = "localPort")]
@@ -85,25 +90,27 @@ pub async fn list_proxies(Extension(auth_user_opt): Extension<Option<AuthUser>>)
             }
         };
 
-        if client_ids.is_empty() {
-            vec![]
-        } else {
-            // Get proxies for those clients
-            match Proxy::find()
-                .filter(crate::entity::proxy::Column::ClientId.is_in(client_ids))
-                .all(db)
-                .await
-            {
-                Ok(proxies) => proxies,
-                Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        ApiResponse::<Vec<crate::entity::proxy::Model>>::error(format!(
-                            "Failed to list proxies: {}",
-                            e
-                        )),
-                    )
-                }
+        match Proxy::find()
+            .filter(
+                Condition::any()
+                    .add(crate::entity::proxy::Column::ClientId.is_in(client_ids))
+                    .add(
+                        Condition::all()
+                            .add(crate::entity::proxy::Column::ClientId.is_null())
+                            .add(crate::entity::proxy::Column::UserId.eq(auth_user.id)),
+                    ),
+            )
+            .all(db)
+            .await
+        {
+            Ok(proxies) => proxies,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ApiResponse::<Vec<crate::entity::proxy::Model>>::error(format!(
+                        "Failed to list proxies: {e}"
+                    )),
+                )
             }
         }
     };
@@ -205,55 +212,82 @@ pub async fn create_proxy(
 
     let db = get_connection().await;
 
-    // 解析 client_id
-    let parsed_client_id: i64 = match req.client_id.parse() {
-        Ok(id) => id,
-        Err(_) => {
+    let direct = !req.upstream_url.is_empty();
+    let upstream_url = if direct {
+        if req.client_id.as_deref().is_some_and(|id| !id.is_empty()) || req.node_id.is_none() {
             return (
                 StatusCode::BAD_REQUEST,
-                ApiResponse::<crate::entity::proxy::Model>::error(format!("无效的客户端 ID: {}", req.client_id)),
-            )
+                ApiResponse::<crate::entity::proxy::Model>::error(
+                    "公网直连需选择节点，且不能绑定 Client".into(),
+                ),
+            );
+        }
+        match common::upstream::parse_upstream(&req.proxy_type, &req.upstream_url) {
+            Ok(url) => url.to_string(),
+            Err(error) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    ApiResponse::<crate::entity::proxy::Model>::error(error.to_string()),
+                )
+            }
+        }
+    } else {
+        String::new()
+    };
+    let client = if direct {
+        None
+    } else {
+        let client_id = match req.client_id.as_deref().unwrap_or_default().parse::<i64>() {
+            Ok(id) => id,
+            Err(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    ApiResponse::<crate::entity::proxy::Model>::error(
+                        "请选择有效的 Client 或填写公网直连目标".into(),
+                    ),
+                )
+            }
+        };
+        match crate::entity::Client::find_by_id(client_id).one(db).await {
+            Ok(Some(client)) => Some(client),
+            Ok(None) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    ApiResponse::<crate::entity::proxy::Model>::error("客户端不存在".into()),
+                )
+            }
+            Err(error) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ApiResponse::<crate::entity::proxy::Model>::error(error.to_string()),
+                )
+            }
         }
     };
-
-    // 获取客户端信息以验证端口限制
-    let client = match crate::entity::Client::find_by_id(parsed_client_id)
-        .one(db)
-        .await
-    {
-        Ok(Some(c)) => c,
-        Ok(None) => {
-            return (
-                StatusCode::NOT_FOUND,
-                ApiResponse::<crate::entity::proxy::Model>::error("客户端不存在".to_string()),
-            )
-        }
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ApiResponse::<crate::entity::proxy::Model>::error(format!("查询客户端失败: {}", e)),
-            )
-        }
-    };
-
-    // 验证端口限制（仅对非管理员用户）
     if !auth_user.is_admin {
-        if let Some(user_id) = client.user_id {
-            match crate::port_limiter::validate_user_port_limit(user_id, req.remote_port, db).await {
-                Ok((allowed, reason)) => {
-                    if !allowed {
-                        return (
-                            StatusCode::FORBIDDEN,
-                            ApiResponse::<crate::entity::proxy::Model>::error(reason),
-                        );
-                    }
-                }
-                Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        ApiResponse::<crate::entity::proxy::Model>::error(format!("验证端口限制失败: {}", e)),
-                    );
-                }
+        if client
+            .as_ref()
+            .is_some_and(|client| client.user_id != Some(auth_user.id))
+        {
+            return (
+                StatusCode::FORBIDDEN,
+                ApiResponse::<crate::entity::proxy::Model>::error("无权访问此客户端".into()),
+            );
+        }
+        match crate::port_limiter::validate_user_port_limit(auth_user.id, req.remote_port, db).await
+        {
+            Ok((true, _)) => {}
+            Ok((false, reason)) => {
+                return (
+                    StatusCode::FORBIDDEN,
+                    ApiResponse::<crate::entity::proxy::Model>::error(reason),
+                )
+            }
+            Err(error) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ApiResponse::<crate::entity::proxy::Model>::error(error.to_string()),
+                )
             }
         }
     }
@@ -279,14 +313,6 @@ pub async fn create_proxy(
 
         // 如果是独享节点，需要检查用户是否有权限
         if node.node_type == "dedicated" && !auth_user.is_admin {
-            // 检查客户端是否属于当前用户（复用已查询的 client）
-            if client.user_id != Some(auth_user.id) {
-                return (
-                    StatusCode::FORBIDDEN,
-                    ApiResponse::<crate::entity::proxy::Model>::error("无权访问此客户端".to_string()),
-                );
-            }
-
             // 检查节点是否分配给了该用户
             let user_node = crate::entity::UserNode::find()
                 .filter(crate::entity::user_node::Column::UserId.eq(auth_user.id))
@@ -342,18 +368,35 @@ pub async fn create_proxy(
         Ok(domain) => domain,
         Err(msg) => return (StatusCode::BAD_REQUEST, ApiResponse::<crate::entity::proxy::Model>::error(msg.to_string())),
     };
-    if req.remote_port == 0 || req.local_port == 0 {
-        return (StatusCode::BAD_REQUEST, ApiResponse::<crate::entity::proxy::Model>::error("端口不能为 0".into()));
+    if req.remote_port == 0 || (!direct && req.local_port == 0) {
+        return (
+            StatusCode::BAD_REQUEST,
+            ApiResponse::<crate::entity::proxy::Model>::error("端口不能为 0".into()),
+        );
     }
-    if let Err((status, msg)) = check_route(db, req.node_id, req.remote_port, &req.proxy_type, &domain, 0).await {
-        return (status, ApiResponse::<crate::entity::proxy::Model>::error(msg));
+    if let Err((status, msg)) = check_route(
+        db,
+        req.node_id,
+        req.remote_port,
+        &req.proxy_type,
+        &domain,
+        0,
+    )
+    .await
+    {
+        return (
+            status,
+            ApiResponse::<crate::entity::proxy::Model>::error(msg),
+        );
     }
 
     let now = chrono::Utc::now().naive_utc();
 
     let new_proxy = crate::entity::proxy::ActiveModel {
         id: NotSet,
-        client_id: Set(req.client_id.clone()),
+        client_id: Set(if direct { None } else { req.client_id.clone() }),
+        user_id: Set(if direct { Some(auth_user.id) } else { None }),
+        upstream_url: Set(upstream_url),
         name: Set(req.name),
         proxy_type: Set(req.proxy_type),
         domain: Set(domain),
@@ -371,10 +414,14 @@ pub async fn create_proxy(
     let db = get_connection().await;
     match new_proxy.insert(db).await {
         Ok(proxy) => {
-            info!("代理已创建: {} (ID: {}, 客户端: {})", proxy.name, proxy.id, proxy.client_id);
+            info!("代理已创建: {} (ID: {})", proxy.name, proxy.id);
 
             // 通过 ProxyControl trait 动态启动代理监听器（同步等待，检测端口占用）
-            if let Err(e) = app_state.proxy_control.start_proxy(&req.client_id, proxy.id).await {
+            if let Err(e) = app_state
+                .proxy_control
+                .start_proxy(proxy.client_id.as_deref().unwrap_or_default(), proxy.id)
+                .await
+            {
                 // 启动失败（可能端口被占用），回滚删除数据库记录
                 tracing::warn!("启动代理监听器失败，回滚创建: {}", e);
                 let _ = Proxy::delete_by_id(proxy.id).exec(db).await;
@@ -393,7 +440,9 @@ pub async fn create_proxy(
             let csm = app_state.client_stream_manager.clone();
             let client_id_notify = req.client_id.clone();
             tokio::spawn(async move {
-                csm.notify_proxy_change(&client_id_notify).await;
+                if let Some(client_id) = client_id_notify {
+                    csm.notify_proxy_change(&client_id).await;
+                }
             });
 
             (StatusCode::OK, ApiResponse::success(proxy))
@@ -437,9 +486,86 @@ pub async fn update_proxy(
             if proxy.group_id.is_some() && matches!(new_kind, "http" | "https") {
                 return (StatusCode::BAD_REQUEST, ApiResponse::<crate::entity::proxy::Model>::error("域名代理请单独创建，不支持代理组".into()));
             }
+            let raw_upstream = req.upstream_url.as_deref().unwrap_or(&proxy.upstream_url);
+            let upstream_url = if proxy.client_id.is_none() {
+                match common::upstream::parse_upstream(new_kind, raw_upstream) {
+                    Ok(url) => url.to_string(),
+                    Err(error) => {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            ApiResponse::<crate::entity::proxy::Model>::error(error.to_string()),
+                        )
+                    }
+                }
+            } else {
+                if !raw_upstream.is_empty() {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        ApiResponse::<crate::entity::proxy::Model>::error(
+                            "请新建公网直连代理，不能将 Client 代理直接转换".into(),
+                        ),
+                    );
+                }
+                String::new()
+            };
+            let upstream_changed = upstream_url != proxy.upstream_url;
             let new_port = req.remote_port.unwrap_or(proxy.remote_port);
-            if new_port == 0 || req.local_port.unwrap_or(proxy.local_port) == 0 {
-                return (StatusCode::BAD_REQUEST, ApiResponse::<crate::entity::proxy::Model>::error("端口不能为 0".into()));
+            if new_port == 0
+                || (proxy.client_id.is_some() && req.local_port.unwrap_or(proxy.local_port) == 0)
+            {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    ApiResponse::<crate::entity::proxy::Model>::error("端口不能为 0".into()),
+                );
+            }
+            if proxy.client_id.is_none() {
+                if !auth_user.is_admin && new_port != proxy.remote_port {
+                    let info = match crate::port_limiter::get_user_port_limit_info(auth_user.id, db).await {
+                        Ok(info) => info,
+                        Err(error) => {
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                ApiResponse::<crate::entity::proxy::Model>::error(error.to_string()),
+                            )
+                        }
+                    };
+                    if let Some(range) = info.allowed_port_range.filter(|range| !range.is_empty()) {
+                        let allowed = crate::port_limiter::parse_port_ranges(&range)
+                            .is_ok_and(|ranges| crate::port_limiter::is_port_in_ranges(new_port, &ranges));
+                        if !allowed {
+                            return (
+                                StatusCode::FORBIDDEN,
+                                ApiResponse::<crate::entity::proxy::Model>::error(
+                                    "节点端口不在用户允许的范围内".into(),
+                                ),
+                            );
+                        }
+                    }
+                }
+                if !proxy.enabled && req.enabled == Some(true) {
+                    match crate::node_limiter::validate_node_proxy_limit_excluding(
+                        proxy.node_id.unwrap_or_default(),
+                        new_port,
+                        db,
+                        id,
+                    )
+                    .await
+                    {
+                        Ok((true, _)) => {}
+                        Ok((false, reason)) => {
+                            return (
+                                StatusCode::FORBIDDEN,
+                                ApiResponse::<crate::entity::proxy::Model>::error(reason),
+                            )
+                        }
+                        Err(error) => {
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                ApiResponse::<crate::entity::proxy::Model>::error(error.to_string()),
+                            )
+                        }
+                    }
+                }
             }
             if req.enabled.unwrap_or(proxy.enabled) {
                 if let Err((status, msg)) = check_route(db, proxy.node_id, new_port, new_kind, &domain, id).await {
@@ -453,10 +579,11 @@ pub async fn update_proxy(
             let old_local_port = proxy.local_port;
             let old_remote_port = proxy.remote_port;
             let proxy_node_id = proxy.node_id;
-            let client_id = proxy.client_id.clone();
+            let client_id = proxy.client_id.clone().unwrap_or_default();
             let mut proxy: crate::entity::proxy::ActiveModel = proxy.into();
 
-            let mut config_changed = domain_changed;
+            let mut config_changed = domain_changed || upstream_changed;
+            proxy.upstream_url = Set(upstream_url);
             proxy.domain = Set(domain);
 
             if let Some(name) = req.name {
@@ -484,10 +611,11 @@ pub async fn update_proxy(
                 if remote_port != old_remote_port {
                     // 验证节点端口范围限制
                     if let Some(node_id) = proxy_node_id {
-                        match crate::node_limiter::validate_node_proxy_limit(
+                        match crate::node_limiter::validate_node_proxy_limit_excluding(
                             node_id,
                             remote_port,
                             db,
+                            id,
                         )
                         .await
                         {
@@ -546,8 +674,16 @@ pub async fn update_proxy(
                                 let mut revert: crate::entity::proxy::ActiveModel = original.clone().into();
                                 // Restore configuration without overwriting concurrent traffic counters.
                                 use crate::entity::proxy::Column;
-                                for column in [Column::Name, Column::ProxyType, Column::Domain,
-                                    Column::LocalIp, Column::LocalPort, Column::RemotePort, Column::Enabled] {
+                                for column in [
+                                    Column::Name,
+                                    Column::ProxyType,
+                                    Column::Domain,
+                                    Column::UpstreamUrl,
+                                    Column::LocalIp,
+                                    Column::LocalPort,
+                                    Column::RemotePort,
+                                    Column::Enabled,
+                                ] {
                                     revert.reset(column);
                                 }
                                 revert.updated_at = Set(chrono::Utc::now().naive_utc());
@@ -643,27 +779,21 @@ pub async fn delete_proxy(
         return (status, ApiResponse::<&str>::error(msg));
     }
 
-    let client_id = proxy.client_id.clone();
+    let client_id = proxy.client_id.clone().unwrap_or_default();
     let proxy_name = proxy.name.clone();
+
+    if let Err(error) = app_state.proxy_control.stop_proxy(&client_id, id).await {
+        tracing::warn!(%error, %id, "停止代理失败，节点重连时会同步公网代理配置");
+    }
 
     // 删除代理
     match Proxy::delete_by_id(id).exec(db).await {
         Ok(_) => {
             info!("代理已删除: {} (ID: {})", proxy_name, id);
 
-            // 通过 ProxyControl trait 停止代理监听器
-            let proxy_control = app_state.proxy_control.clone();
-            tokio::spawn(async move {
-                if let Err(e) = proxy_control.stop_proxy(&client_id, id).await {
-                    tracing::error!("停止代理监听器失败: {}", e);
-                } else {
-                    info!("代理监听器已停止: {}", proxy_name);
-                }
-            });
-
             // 通知 Agent Client 代理配置已变更
             let csm = app_state.client_stream_manager.clone();
-            let client_id_notify = proxy.client_id.clone();
+            let client_id_notify = proxy.client_id.clone().unwrap_or_default();
             tokio::spawn(async move {
                 csm.notify_proxy_change(&client_id_notify).await;
             });
@@ -833,7 +963,9 @@ pub async fn batch_create_proxies(
 
         let new_proxy = crate::entity::proxy::ActiveModel {
             id: NotSet,
-            client_id: Set(req.client_id.clone()),
+            client_id: Set(Some(req.client_id.clone())),
+            user_id: Set(None),
+            upstream_url: Set(String::new()),
             name: Set(proxy_name),
             proxy_type: Set(req.proxy_type.clone()),
             domain: Set(String::new()),
@@ -914,7 +1046,7 @@ pub async fn toggle_proxy_group(
         Err((status, msg)) => return (status, ApiResponse::<&str>::error(msg)),
     };
 
-    let client_id = proxies[0].client_id.clone();
+    let client_id = proxies[0].client_id.clone().unwrap_or_default();
     let now = chrono::Utc::now().naive_utc();
 
     for proxy in &proxies {
@@ -970,20 +1102,18 @@ pub async fn delete_proxy_group(
         Err((status, msg)) => return (status, ApiResponse::<&str>::error(msg)),
     };
 
-    let client_id = proxies[0].client_id.clone();
+    let client_id = proxies[0].client_id.clone().unwrap_or_default();
     let count = proxies.len();
 
     for proxy in &proxies {
+        if let Err(error) = app_state
+            .proxy_control
+            .stop_proxy(&client_id, proxy.id)
+            .await
+        {
+            tracing::warn!(%error, proxy_id = proxy.id, "停止代理监听器失败");
+        }
         let _ = Proxy::delete_by_id(proxy.id).exec(db).await;
-
-        let proxy_control = app_state.proxy_control.clone();
-        let cid = client_id.clone();
-        let pid = proxy.id;
-        tokio::spawn(async move {
-            if let Err(e) = proxy_control.stop_proxy(&cid, pid).await {
-                tracing::error!("停止代理监听器失败 (ID: {}): {}", pid, e);
-            }
-        });
     }
 
     info!("代理组 {} 已删除（共 {} 个）", group_id, count);
@@ -1031,7 +1161,7 @@ pub async fn update_proxy_group(
         Err((status, msg)) => return (status, ApiResponse::<&str>::error(msg)),
     };
 
-    let client_id = proxies[0].client_id.clone();
+    let client_id = proxies[0].client_id.clone().unwrap_or_default();
     let now = chrono::Utc::now().naive_utc();
     let mut config_changed = false;
 
@@ -1139,7 +1269,7 @@ pub async fn add_ports_to_proxy_group(
     };
 
     let template = &existing[0];
-    let client_id = template.client_id.clone();
+    let client_id = template.client_id.clone().unwrap_or_default();
     let proxy_type = template.proxy_type.clone();
     let local_ip = template.local_ip.clone();
     let node_id = template.node_id;
@@ -1222,7 +1352,9 @@ pub async fn add_ports_to_proxy_group(
         let local_port = if req.local_ports.len() == 1 { req.local_ports[0] } else { req.local_ports[i] };
         let new_proxy = crate::entity::proxy::ActiveModel {
             id: NotSet,
-            client_id: Set(client_id.clone()),
+            client_id: Set(Some(client_id.clone())),
+            user_id: Set(None),
+            upstream_url: Set(String::new()),
             name: Set(format!("{}-{}", base_name, remote_port)),
             proxy_type: Set(proxy_type.clone()),
             domain: Set(String::new()),

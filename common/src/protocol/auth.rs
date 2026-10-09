@@ -54,6 +54,11 @@ pub trait ClientAuthProvider: Send + Sync {
     /// 检查客户端是否超出流量限制
     async fn check_traffic_limit(&self, client_id: i64) -> Result<TrafficLimitResponse>;
 
+    /// Check a Node-owned proxy against its owner and node traffic quotas.
+    async fn check_direct_proxy_limit(&self, _proxy_id: i64) -> Result<TrafficLimitResponse> {
+        anyhow::bail!("不支持公网代理流量检查")
+    }
+
     /// 获取客户端的所有代理配置
     async fn get_client_proxies(&self, client_id: i64) -> Result<Vec<ProxyConfig>>;
 }

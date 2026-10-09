@@ -28,6 +28,7 @@ pub struct LocalProxyControl {
     tunnel_connections: Arc<RwLock<HashMap<String, Arc<Box<dyn TunnelConnection>>>>>,
     auth_provider: Arc<dyn ClientAuthProvider>,
     proxy_server: Arc<ProxyServer>,
+    direct_lock: tokio::sync::Mutex<()>,
 }
 
 impl LocalProxyControl {
@@ -44,6 +45,7 @@ impl LocalProxyControl {
             tunnel_connections,
             auth_provider,
             proxy_server,
+            direct_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -52,6 +54,7 @@ impl LocalProxyControl {
             self.quic_connections.clone(),
             self.tunnel_connections.clone(),
         )
+        .with_auth_provider(self.auth_provider.clone())
     }
 }
 
@@ -80,14 +83,56 @@ impl ProxyControl for LocalProxyControl {
         info!("启动代理: client_id={}, proxy_id={}", client_id, proxy_id);
 
         // 使用 ProxyListenerManager 启动代理监听器
-        self.listener_manager.start_client_proxies_from_configs(
-            client_id.to_string(),
-            target_proxies,
-            self.conn_provider(),
-        ).await
+        self.listener_manager
+            .start_client_proxies_from_configs(
+                client_id.to_string(),
+                target_proxies,
+                self.conn_provider(),
+            )
+            .await
+    }
+
+    async fn start_direct_proxy(
+        &self,
+        config: common::protocol::control::ProxyConfig,
+    ) -> Result<()> {
+        let _guard = self.direct_lock.lock().await;
+        anyhow::ensure!(
+            config.client_id.is_empty() && !config.upstream_url.is_empty() && config.enabled,
+            "无效的公网直连配置"
+        );
+        self.listener_manager
+            .stop_single_proxy("", config.proxy_id)
+            .await;
+        self.listener_manager
+            .start_client_proxies_from_configs("".into(), vec![config], self.conn_provider())
+            .await
+    }
+
+    async fn sync_direct_proxies(
+        &self,
+        configs: Vec<common::protocol::control::ProxyConfig>,
+    ) -> Result<()> {
+        let _guard = self.direct_lock.lock().await;
+        self.listener_manager.stop_client_proxies("").await;
+        for config in configs {
+            anyhow::ensure!(
+                config.client_id.is_empty() && !config.upstream_url.is_empty() && config.enabled,
+                "无效的公网直连配置"
+            );
+            if let Err(error) = self
+                .listener_manager
+                .start_client_proxies_from_configs("".into(), vec![config], self.conn_provider())
+                .await
+            {
+                tracing::error!(%error, "恢复公网直连代理失败");
+            }
+        }
+        Ok(())
     }
 
     async fn stop_proxy(&self, client_id: &str, proxy_id: i64) -> Result<()> {
+        let _guard = self.direct_lock.lock().await;
         self.listener_manager
             .stop_single_proxy(client_id, proxy_id)
             .await;
@@ -149,7 +194,7 @@ impl ProxyControl for LocalProxyControl {
 
     async fn get_server_status(&self) -> Result<ServerStatus> {
         let clients = self.get_connected_clients().await?;
-        let active_proxy_count = clients.len(); // 简化：用连接数近似
+        let active_proxy_count = self.listener_manager.active_count().await;
         Ok(ServerStatus {
             connected_clients: clients,
             active_proxy_count,

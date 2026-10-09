@@ -108,7 +108,9 @@ impl ClientStreamManager {
         // 收集所有不重复的 client_id
         let mut client_ids = std::collections::HashSet::new();
         for proxy in proxies {
-            client_ids.insert(proxy.client_id);
+            if let Some(client_id) = proxy.client_id {
+                client_ids.insert(client_id);
+            }
         }
 
         // 逐个通知客户端

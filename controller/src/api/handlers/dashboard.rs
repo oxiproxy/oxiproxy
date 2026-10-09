@@ -1,4 +1,4 @@
-use sea_orm::{DatabaseConnection, DbErr, EntityTrait, ColumnTrait, QueryFilter};
+use sea_orm::{ColumnTrait, Condition, DatabaseConnection, DbErr, EntityTrait, QueryFilter};
 use crate::entity;
 use crate::middleware::AuthUser;
 use super::ApiResponse;
@@ -174,16 +174,17 @@ async fn get_user_proxies(
 ) -> Result<Vec<entity::proxy::Model>, DbErr> {
     let clients = get_user_clients(db, user_id).await?;
 
-    let mut all_proxies = Vec::new();
-    for client in clients {
-        let client_id = client.id.to_string();
-        let proxies = entity::Proxy::find()
-            .filter(entity::proxy::Column::ClientId.eq(&client_id))
-            .all(db)
-            .await?;
-
-        all_proxies.extend(proxies);
-    }
-
-    Ok(all_proxies)
+    let client_ids: Vec<_> = clients.into_iter().map(|c| c.id.to_string()).collect();
+    entity::Proxy::find()
+        .filter(
+            Condition::any()
+                .add(entity::proxy::Column::ClientId.is_in(client_ids))
+                .add(
+                    Condition::all()
+                        .add(entity::proxy::Column::ClientId.is_null())
+                        .add(entity::proxy::Column::UserId.eq(user_id)),
+                ),
+        )
+        .all(db)
+        .await
 }

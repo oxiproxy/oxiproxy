@@ -87,8 +87,24 @@ pub async fn verify_proxy_ownership(
         return Ok(());
     }
 
-    let client_id: i64 = proxy.client_id.parse()
-        .map_err(|_| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "无效的客户端 ID".to_string()))?;
+    if proxy.client_id.is_none() {
+        return if proxy.user_id == Some(auth_user.id) {
+            Ok(())
+        } else {
+            Err((axum::http::StatusCode::FORBIDDEN, "无权访问此代理".into()))
+        };
+    }
+    let client_id: i64 = proxy
+        .client_id
+        .as_deref()
+        .unwrap_or_default()
+        .parse()
+        .map_err(|_| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "无效的客户端 ID".to_string(),
+            )
+        })?;
 
     let client = Client::find_by_id(client_id)
         .one(db)

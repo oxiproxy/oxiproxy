@@ -6,7 +6,11 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
-    pub client_id: String,
+    pub client_id: Option<String>,
+    #[serde(rename = "userId")]
+    pub user_id: Option<i64>,
+    #[serde(rename = "upstreamUrl")]
+    pub upstream_url: String,
     pub name: String,
     #[serde(rename = "type")]
     pub proxy_type: String,
@@ -41,3 +45,21 @@ pub enum Relation {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
+
+impl Model {
+    pub fn config(&self) -> common::protocol::control::ProxyConfig {
+        common::protocol::control::ProxyConfig {
+            proxy_id: self.id,
+            client_id: self.client_id.clone().unwrap_or_default(),
+            name: self.name.clone(),
+            proxy_type: self.proxy_type.clone(),
+            domain: self.domain.clone(),
+            upstream_url: self.upstream_url.clone(),
+            user_id: self.user_id,
+            local_ip: self.local_ip.clone(),
+            local_port: self.local_port,
+            remote_port: self.remote_port,
+            enabled: self.enabled,
+        }
+    }
+}

@@ -61,6 +61,7 @@ message ControllerToAgentMessage {
     UpdateCertificateCommand update_certificate = 18;
     // Controller 主动下发重启指令
     RestartCommand restart = 19;
+    SyncDirectProxiesCommand sync_direct_proxies = 20;
   }
 }
 
@@ -166,6 +167,7 @@ message ClientOnlineResponse {
 message CheckTrafficLimitRequest {
   string request_id = 1;
   int64 client_id = 2;
+  optional int64 proxy_id = 3;
 }
 
 message TrafficLimitResponse {
@@ -197,6 +199,8 @@ message ProxyConfig {
   uint32 remote_port = 7;
   bool enabled = 8;
   string domain = 9;
+  string upstream_url = 10;
+  optional int64 user_id = 11;
 }
 
 // ===== 流量上报 =====
@@ -219,10 +223,15 @@ message TrafficReportResponse {
 
 // ===== Controller 下发指令 =====
 
+message SyncDirectProxiesCommand {
+  repeated ProxyConfig proxies = 1;
+}
+
 message StartProxyCommand {
   string request_id = 1;
   string client_id = 2;
   int64 proxy_id = 3;
+  optional ProxyConfig config = 4;
 }
 
 message StopProxyCommand {

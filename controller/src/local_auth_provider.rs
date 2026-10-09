@@ -129,10 +129,12 @@ impl ClientAuthProvider for LocalControllerAuthProvider {
             .into_iter()
             .map(|p| ProxyConfig {
                 proxy_id: p.id,
-                client_id: p.client_id,
+                client_id: p.client_id.unwrap_or_default(),
                 name: p.name,
                 proxy_type: p.proxy_type,
-                    domain: p.domain,
+                domain: p.domain,
+                upstream_url: p.upstream_url,
+                user_id: p.user_id,
                 local_ip: p.local_ip,
                 local_port: p.local_port,
                 remote_port: p.remote_port,
