@@ -189,12 +189,13 @@ export const proxyService = {
   },
 
   async createProxy(data: {
-    client_id: string;
+    client_id?: string | null;
     name: string;
     type: string;
-    localIP: string;
-    localPort: number;
+    localIP?: string;
+    localPort?: number;
     domain?: string;
+    upstreamUrl?: string;
     remotePort: number;
     nodeId?: number;
   }): Promise<ApiResponse<Proxy>> {
@@ -210,6 +211,7 @@ export const proxyService = {
       localIP?: string;
       localPort?: number;
       domain?: string;
+    upstreamUrl?: string;
       remotePort?: number;
       enabled?: boolean;
     }

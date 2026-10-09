@@ -164,6 +164,9 @@ impl AgentServerService for AgentServerServiceImpl {
 
             // 3. 将 stream sender 注册到 NodeManager
             node_manager.register_node_stream(node_id, tx.clone()).await;
+            if let Err(error) = node_manager.send_direct_snapshot(node_id).await {
+                warn!(%error, %node_id, "恢复公网直连代理失败");
+            }
 
             // 4. 消息处理循环
             let auth_provider = LocalControllerAuthProvider::new();
@@ -233,7 +236,12 @@ impl AgentServerService for AgentServerServiceImpl {
                     }
 
                     AgentPayload::CheckTrafficLimit(req) => {
-                        let result = auth_provider.check_traffic_limit(req.client_id).await;
+                        let result = if let Some(proxy_id) = req.proxy_id {
+                            check_direct_proxy_limit(node_id, proxy_id, get_connection().await)
+                                .await
+                        } else {
+                            auth_provider.check_traffic_limit(req.client_id).await
+                        };
                         let resp = match result {
                             Ok(r) => oxiproxy::TrafficLimitResponse {
                                 request_id: req.request_id,
@@ -242,8 +250,8 @@ impl AgentServerService for AgentServerServiceImpl {
                             },
                             Err(_) => oxiproxy::TrafficLimitResponse {
                                 request_id: req.request_id,
-                                exceeded: false,
-                                reason: None,
+                                exceeded: req.proxy_id.is_some(),
+                                reason: req.proxy_id.map(|_| "公网代理配额检查失败".into()),
                             },
                         };
                         let msg = oxiproxy::ControllerToAgentMessage {
@@ -340,14 +348,62 @@ async fn get_client_proxies_filtered(client_id: i64, filter_node_id: i64) -> Vec
         .filter(|p| p.node_id == Some(filter_node_id))
         .map(|p| oxiproxy::ProxyConfig {
             proxy_id: p.id,
-            client_id: p.client_id,
+            client_id: p.client_id.unwrap_or_default(),
             name: p.name,
             proxy_type: p.proxy_type,
-                    domain: p.domain,
+            domain: p.domain,
+            upstream_url: p.upstream_url,
+            user_id: p.user_id,
             local_ip: p.local_ip,
             local_port: p.local_port as u32,
             remote_port: p.remote_port as u32,
             enabled: p.enabled,
         })
         .collect()
+}
+
+async fn check_direct_proxy_limit(
+    node_id: i64,
+    proxy_id: i64,
+    db: &sea_orm::DatabaseConnection,
+) -> anyhow::Result<common::protocol::auth::TrafficLimitResponse> {
+    let proxy = Proxy::find_by_id(proxy_id)
+        .one(db)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("代理不存在"))?;
+    anyhow::ensure!(
+        proxy.node_id == Some(node_id) && proxy.client_id.is_none() && proxy.enabled,
+        "无权使用此公网代理"
+    );
+    let owner_id = proxy
+        .user_id
+        .ok_or_else(|| anyhow::anyhow!("代理缺少归属用户"))?;
+    anyhow::ensure!(
+        crate::entity::User::find_by_id(owner_id)
+            .one(db)
+            .await?
+            .is_some(),
+        "用户不存在"
+    );
+    let (exceeded, reason) = crate::traffic_limiter::check_user_traffic_limit(owner_id, db).await?;
+    let node = Node::find_by_id(node_id)
+        .one(db)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("节点不存在"))?;
+    let node_exceeded = !crate::traffic_limiter::should_reset_node_traffic(&node)
+        && (node.is_traffic_exceeded
+            || node.traffic_quota_gb.is_some_and(|quota| {
+                node.total_bytes_sent + node.total_bytes_received
+                    >= crate::traffic_limiter::gb_to_bytes(quota)
+            }));
+    Ok(common::protocol::auth::TrafficLimitResponse {
+        exceeded: exceeded || node_exceeded,
+        reason: if node_exceeded {
+            Some("节点流量配额已用尽".into())
+        } else if exceeded {
+            Some(reason)
+        } else {
+            None
+        },
+    })
 }

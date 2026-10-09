@@ -87,6 +87,7 @@ impl TrafficManager {
                 entry.1 += bytes_received;
             }
 
+            let direct_user_id = proxy.user_id;
             let mut proxy_active: proxy::ActiveModel = proxy.into();
             // Safety: proxy_active 由 Model 转换而来，字段为 Unchanged(v)，unwrap 安全
             proxy_active.total_bytes_sent = Set(proxy_active.total_bytes_sent.unwrap() + bytes_sent);
@@ -99,12 +100,12 @@ impl TrafficManager {
             // 2. 查询客户端（用于每日统计和客户端流量更新）
             let client_opt = Client::find_by_id(client_id).one(db).await.ok().flatten();
 
-            // 3. 更新每日流量统计（仅在客户端也存在时插入，避免外键约束失败）
-            if client_opt.is_some() {
+            // 3. 更新每日流量统计；公网直连不关联客户端。
+            {
                 let daily = traffic_daily::ActiveModel {
                     id: NotSet,
                     proxy_id: Set(proxy_id),
-                    client_id: Set(client_id),
+                    client_id: Set(client_opt.as_ref().map(|c| c.id)),
                     bytes_sent: Set(bytes_sent),
                     bytes_received: Set(bytes_received),
                     date: Set(today.clone()),
@@ -134,9 +135,9 @@ impl TrafficManager {
                 }
             }
 
+            let owner_id = direct_user_id.or_else(|| client_opt.as_ref().and_then(|c| c.user_id));
             // 4. 更新客户端流量
             if let Some(client) = client_opt {
-                let client_user_id = client.user_id;
                 let needs_reset = crate::traffic_limiter::should_reset_client_traffic(&client);
 
                 let mut client_active: client::ActiveModel = client.clone().into();
@@ -179,49 +180,61 @@ impl TrafficManager {
                         }
                     }
                 }
+            }
+            // Update the owner even when no Client exists.
+            if let Some(uid) = owner_id {
+                if let Ok(Some(user)) = User::find_by_id(uid).one(db).await {
+                    let needs_reset = crate::traffic_limiter::should_reset_traffic(&user);
 
-                // 4. 如果客户端有 user_id，同时更新用户流量
-                if let Some(uid) = client_user_id {
-                    if let Ok(Some(user)) = User::find_by_id(uid).one(db).await {
-                        let needs_reset = crate::traffic_limiter::should_reset_traffic(&user);
+                    let mut user_active: user::ActiveModel = user.clone().into();
 
-                        let mut user_active: user::ActiveModel = user.clone().into();
+                    if needs_reset {
+                        user_active.total_bytes_sent = Set(bytes_sent);
+                        user_active.total_bytes_received = Set(bytes_received);
+                        user_active.is_traffic_exceeded = Set(false);
+                        user_active.last_reset_at = Set(Some(now));
+                        info!("🔄 用户 #{} ({}) 流量已自动重置", uid, user.username);
+                    } else {
+                        // Safety: user_active 由 Model 转换而来，字段为 Unchanged(v)，unwrap 安全
+                        user_active.total_bytes_sent =
+                            Set(user_active.total_bytes_sent.unwrap() + bytes_sent);
+                        user_active.total_bytes_received =
+                            Set(user_active.total_bytes_received.unwrap() + bytes_received);
+                    }
 
-                        if needs_reset {
-                            user_active.total_bytes_sent = Set(bytes_sent);
-                            user_active.total_bytes_received = Set(bytes_received);
-                            user_active.is_traffic_exceeded = Set(false);
-                            user_active.last_reset_at = Set(Some(now));
-                            info!("🔄 用户 #{} ({}) 流量已自动重置", uid, user.username);
+                    user_active.updated_at = Set(now);
+
+                    if let Err(e) = user_active.update(db).await {
+                        error!("更新用户流量失败: {}", e);
+                    } else {
+                        let new_sent = if needs_reset {
+                            bytes_sent
                         } else {
-                            // Safety: user_active 由 Model 转换而来，字段为 Unchanged(v)，unwrap 安全
-                            user_active.total_bytes_sent = Set(user_active.total_bytes_sent.unwrap() + bytes_sent);
-                            user_active.total_bytes_received = Set(user_active.total_bytes_received.unwrap() + bytes_received);
-                        }
-
-                        user_active.updated_at = Set(now);
-
-                        if let Err(e) = user_active.update(db).await {
-                            error!("更新用户流量失败: {}", e);
+                            user.total_bytes_sent + bytes_sent
+                        };
+                        let new_received = if needs_reset {
+                            bytes_received
                         } else {
-                            let new_sent = if needs_reset { bytes_sent } else { user.total_bytes_sent + bytes_sent };
-                            let new_received = if needs_reset { bytes_received } else { user.total_bytes_received + bytes_received };
+                            user.total_bytes_received + bytes_received
+                        };
 
-                            // 检查用户配额
-                            if let Some(quota_gb) = user.traffic_quota_gb {
-                                let total_used = new_sent + new_received;
-                                let quota_bytes = crate::traffic_limiter::gb_to_bytes(quota_gb);
-                                if total_used >= quota_bytes && !user.is_traffic_exceeded {
-                                    if let Ok(Some(u)) = User::find_by_id(uid).one(db).await {
-                                        let mut u_active: user::ActiveModel = u.into();
-                                        u_active.is_traffic_exceeded = Set(true);
-                                        u_active.updated_at = Set(now);
-                                        let _ = u_active.update(db).await;
-                                        error!("⚠️ 用户 #{} ({}) 流量配额已用尽: {:.2} GB / {:.2} GB",
-                                            uid, user.username,
-                                            crate::traffic_limiter::bytes_to_gb(total_used),
-                                            quota_gb);
-                                    }
+                        // 检查用户配额
+                        if let Some(quota_gb) = user.traffic_quota_gb {
+                            let total_used = new_sent + new_received;
+                            let quota_bytes = crate::traffic_limiter::gb_to_bytes(quota_gb);
+                            if total_used >= quota_bytes && !user.is_traffic_exceeded {
+                                if let Ok(Some(u)) = User::find_by_id(uid).one(db).await {
+                                    let mut u_active: user::ActiveModel = u.into();
+                                    u_active.is_traffic_exceeded = Set(true);
+                                    u_active.updated_at = Set(now);
+                                    let _ = u_active.update(db).await;
+                                    error!(
+                                        "⚠️ 用户 #{} ({}) 流量配额已用尽: {:.2} GB / {:.2} GB",
+                                        uid,
+                                        user.username,
+                                        crate::traffic_limiter::bytes_to_gb(total_used),
+                                        quota_gb
+                                    );
                                 }
                             }
                         }
@@ -447,25 +460,29 @@ pub async fn get_traffic_overview(user_id: Option<i64>, days: i64) -> Result<Tra
     let mut proxies = Vec::new();
     let all_proxies = Proxy::find().all(db).await?;
     for proxy in all_proxies {
-        let proxy_client_id = match proxy.client_id.parse::<i64>() {
-            Ok(id) => id,
-            Err(_) => {
-                error!("代理 #{} 的 client_id '{}' 无法解析为整数，跳过", proxy.id, proxy.client_id);
-                continue;
-            }
-        };
+        let proxy_client_id = proxy
+            .client_id
+            .as_deref()
+            .and_then(|id| id.parse::<i64>().ok())
+            .unwrap_or(0);
 
         let total = proxy.total_bytes_sent + proxy.total_bytes_received;
         if !is_admin {
             // 如果不是管理员，只显示有权限的代理
             if let Some(uid) = user_id {
-                if !has_client_access(db, uid, proxy_client_id).await? {
+                if if proxy.client_id.is_none() {
+                    proxy.user_id != Some(uid)
+                } else {
+                    !has_client_access(db, uid, proxy_client_id).await?
+                } {
                     continue;
                 }
             }
         }
 
-        let client_name = if let Some(client) = Client::find_by_id(proxy_client_id).one(db).await? {
+        let client_name = if proxy.client_id.is_none() {
+            "公网直连".into()
+        } else if let Some(client) = Client::find_by_id(proxy_client_id).one(db).await? {
             client.name
         } else {
             String::from("Unknown")
@@ -497,7 +514,15 @@ pub async fn get_traffic_overview(user_id: Option<i64>, days: i64) -> Result<Tra
         if !is_admin {
             if let Some(uid) = user_id {
                 // 如果不是管理员，只显示有权限的代理的流量
-                if !has_client_access(db, uid, d.client_id).await? {
+                let allowed = if let Some(client_id) = d.client_id {
+                    has_client_access(db, uid, client_id).await?
+                } else {
+                    Proxy::find_by_id(d.proxy_id)
+                        .one(db)
+                        .await?
+                        .is_some_and(|p| p.user_id == Some(uid))
+                };
+                if !allowed {
                     continue;
                 }
             }

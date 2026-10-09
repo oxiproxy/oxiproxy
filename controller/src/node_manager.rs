@@ -119,6 +119,46 @@ impl NodeManager {
         Ok(proxy.and_then(|p| p.node_id))
     }
 
+    async fn proxy_on_node(
+        &self,
+        client_id: &str,
+        proxy_id: i64,
+    ) -> Result<crate::entity::proxy::Model> {
+        let proxy = crate::entity::Proxy::find_by_id(proxy_id)
+            .one(get_connection().await)
+            .await?
+            .ok_or_else(|| anyhow!("代理 #{} 不存在", proxy_id))?;
+        anyhow::ensure!(
+            proxy.client_id.as_deref().unwrap_or_default() == client_id,
+            "代理与 Client 不匹配"
+        );
+        anyhow::ensure!(proxy.node_id.is_some(), "代理未关联节点");
+        Ok(proxy)
+    }
+
+    pub async fn send_direct_snapshot(&self, node_id: i64) -> Result<()> {
+        let proxies = crate::entity::Proxy::find()
+            .filter(crate::entity::proxy::Column::NodeId.eq(node_id))
+            .filter(crate::entity::proxy::Column::ClientId.is_null())
+            .filter(crate::entity::proxy::Column::Enabled.eq(true))
+            .all(get_connection().await)
+            .await?;
+        let message = oxiproxy::ControllerToAgentMessage {
+            payload: Some(ControllerPayload::SyncDirectProxies(
+                oxiproxy::SyncDirectProxiesCommand {
+                    proxies: proxies.iter().map(|p| p.config().into()).collect(),
+                },
+            )),
+        };
+        let streams = self.streams.read().await;
+        let stream = streams.get(&node_id).ok_or_else(|| anyhow!("节点未连接"))?;
+        stream
+            .tx
+            .send(Ok(message))
+            .await
+            .map_err(|_| anyhow!("同步公网代理失败"))
+    }
+
     /// 健康检查所有节点
     pub async fn check_all_nodes(&self) -> Vec<(i64, bool)> {
         let db = get_connection().await;
@@ -339,13 +379,18 @@ fn replace_request_id(payload: ControllerPayload, request_id: &str) -> Controlle
 #[async_trait]
 impl ProxyControl for NodeManager {
     async fn start_proxy(&self, client_id: &str, proxy_id: i64) -> Result<()> {
-        let node_id = self.resolve_node_for_client(client_id).await?
-            .ok_or_else(|| anyhow!("客户端 {} 未关联任何节点", client_id))?;
+        let proxy = self.proxy_on_node(client_id, proxy_id).await?;
+        let node_id = proxy.node_id.ok_or_else(|| anyhow!("代理未关联节点"))?;
 
         let cmd = ControllerPayload::StartProxy(oxiproxy::StartProxyCommand {
             request_id: String::new(),
             client_id: client_id.to_string(),
             proxy_id,
+            config: if proxy.client_id.is_none() {
+                Some(proxy.config().into())
+            } else {
+                None
+            },
         });
 
         let resp = self.send_command_and_wait(node_id, cmd).await?;
@@ -363,8 +408,8 @@ impl ProxyControl for NodeManager {
     }
 
     async fn stop_proxy(&self, client_id: &str, proxy_id: i64) -> Result<()> {
-        let node_id = self.resolve_node_for_client(client_id).await?
-            .ok_or_else(|| anyhow!("客户端 {} 未关联任何节点", client_id))?;
+        let proxy = self.proxy_on_node(client_id, proxy_id).await?;
+        let node_id = proxy.node_id.ok_or_else(|| anyhow!("代理未关联节点"))?;
 
         let cmd = ControllerPayload::StopProxy(oxiproxy::StopProxyCommand {
             request_id: String::new(),

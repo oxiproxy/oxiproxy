@@ -7,7 +7,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
     pub proxy_id: i64,
-    pub client_id: i64,
+    pub client_id: Option<i64>,
     pub bytes_sent: i64,
     pub bytes_received: i64,
     pub date: String, // 格式: YYYY-MM-DD

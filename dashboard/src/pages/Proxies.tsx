@@ -32,6 +32,8 @@ export default function Proxies() {
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [clientStatusFilter, setClientStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
   const [formData, setFormData] = useState({
+    targetMode: 'client',
+    upstreamUrl: '',
     client_id: '',
     node_id: '',
     name: '',
@@ -122,6 +124,8 @@ export default function Proxies() {
 
   const resetForm = () => {
     setFormData({
+      targetMode: 'client',
+      upstreamUrl: '',
       client_id: '',
       node_id: '',
       name: '',
@@ -140,6 +144,30 @@ export default function Proxies() {
   };
 
   const handleCreateProxy = async () => {
+    if (formData.targetMode === 'direct') {
+      const { ports, error } = parsePortString(formData.remotePort);
+      if (!formData.name.trim() || !formData.node_id || !formData.domain.trim() || !formData.upstreamUrl.trim() || error || ports.length !== 1) {
+        showToast('请填写名称、节点、域名、目标地址和一个有效的节点端口', 'error');
+        return;
+      }
+      try {
+        const response = await proxyService.createProxy({
+          name: formData.name, type: formData.type, domain: formData.domain.trim(),
+          upstreamUrl: formData.upstreamUrl.trim(), remotePort: ports[0], nodeId: Number(formData.node_id),
+        });
+        if (response.success) {
+          showToast('公网直连代理已创建', 'success');
+          resetForm();
+          setShowCreateModal(false);
+          loadData();
+        } else {
+          showToast(response.message || '创建失败', 'error');
+        }
+      } catch {
+        showToast('创建失败，请检查目标地址及节点状态', 'error');
+      }
+      return;
+    }
     if (!formData.name || !formData.client_id || !formData.node_id || !formData.localPort || !formData.remotePort) {
       showToast('请填写所有必填字段', 'error');
       return;
@@ -232,6 +260,7 @@ export default function Proxies() {
       const response = await proxyService.updateProxy(editingProxy.id, {
         name: formData.name || undefined,
         type: formData.type || undefined,
+        upstreamUrl: formData.targetMode === 'direct' ? formData.upstreamUrl.trim() : undefined,
         domain: ['http', 'https'].includes(formData.type) ? formData.domain.trim() : '',
         localIP: formData.localIP || undefined,
         localPort: formData.localPort ? parseInt(formData.localPort) : undefined,
@@ -256,7 +285,9 @@ export default function Proxies() {
   const handleEdit = (proxy: Proxy) => {
     setEditingProxy(proxy);
     setFormData({
-      client_id: proxy.client_id,
+      targetMode: proxy.upstreamUrl ? 'direct' : 'client',
+      upstreamUrl: proxy.upstreamUrl || '',
+      client_id: proxy.client_id || '',
       node_id: proxy.nodeId ? proxy.nodeId.toString() : '',
       name: proxy.name,
       type: proxy.type,
@@ -306,7 +337,8 @@ export default function Proxies() {
     }
   };
 
-  const getClientName = (clientId: string) => {
+  const getClientName = (clientId: string | null) => {
+    if (!clientId) return "公网直连";
     const client = clients.find((c) => c.id.toString() === clientId);
     return client?.name || clientId;
   };
@@ -516,7 +548,7 @@ export default function Proxies() {
             groupId,
             name: baseName,
             proxies: sorted,
-            client_id: first.client_id,
+            client_id: first.client_id || '',
             nodeId: first.nodeId,
             type: first.type,
             localIP: first.localIP,
@@ -581,6 +613,8 @@ export default function Proxies() {
     setEditingGroupId(group.groupId);
     setEditingProxy(null);
     setFormData({
+      targetMode: 'client',
+      upstreamUrl: '',
       client_id: group.client_id,
       node_id: group.nodeId ? group.nodeId.toString() : '',
       name: group.name,
@@ -833,7 +867,7 @@ export default function Proxies() {
                               <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                             </svg>
                             <span className="text-muted-foreground font-mono text-xs">
-                              {proxy.localIP}:{proxy.localPort}
+                              {proxy.upstreamUrl || `${proxy.localIP}:${proxy.localPort}`}
                             </span>
                           </div>
                         </TableCell>
@@ -1025,7 +1059,7 @@ export default function Proxies() {
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                               </svg>
                               <span className="text-muted-foreground font-mono text-xs">
-                                {proxy.localIP}:{proxy.localPort}
+                                {proxy.upstreamUrl || `${proxy.localIP}:${proxy.localPort}`}
                               </span>
                             </div>
                           </TableCell>
@@ -1121,8 +1155,22 @@ export default function Proxies() {
             {/* 可滚动内容区域 */}
             <div className="flex-1 overflow-y-auto px-6 py-4">
               <div className="space-y-4">
+                {!editingGroupId && (
+                  <div>
+                    <label className="block text-sm font-semibold text-foreground mb-3">目标连接方式</label>
+                    <select value={formData.targetMode} disabled={!!editingProxy}
+                      onChange={(e) => setFormData({ ...formData, targetMode: e.target.value,
+                        type: e.target.value === 'direct' ? 'http' : 'tcp', domain: '',
+                        remotePort: e.target.value === 'direct' ? '80' : '', upstreamUrl: '' })}
+                      className="w-full px-4 py-3 border border-border rounded-xl bg-muted/50 disabled:opacity-60">
+                      <option value="client">内网 Client 隧道</option>
+                      <option value="direct">公网直连（无需 Client）</option>
+                    </select>
+                    {formData.targetMode === 'direct' && <p className="text-xs text-muted-foreground mt-2">节点直接连接目标服务，无需创建或安装 Client。</p>}
+                  </div>
+                )}
                 {/* 客户端选择 */}
-                <div>
+                {formData.targetMode === 'client' && <div>
                   <label className="block text-sm font-semibold text-foreground mb-3">选择客户端 *</label>
                   {(editingProxy || editingGroupId) ? (
                     <div className="px-4 py-3 bg-muted rounded-xl text-muted-foreground text-sm">
@@ -1213,7 +1261,7 @@ export default function Proxies() {
                     </div>
                     </>
                   )}
-                </div>
+                </div>}
 
                 {/* 节点选择 */}
                 <div>
@@ -1377,20 +1425,24 @@ export default function Proxies() {
                       }}
                       className="w-full px-4 py-3 border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-muted/50 hover:bg-card"
                     >
-                      <option value="tcp">TCP</option>
-                      <option value="udp">UDP</option>
+                      {formData.targetMode === 'client' && <option value="tcp">TCP</option>}
+                      {formData.targetMode === 'client' && <option value="udp">UDP</option>}
                       {!editingGroupId && !editingProxy?.groupId && <option value="http">HTTP（Host 分流）</option>}
                       {!editingGroupId && !editingProxy?.groupId && <option value="https">HTTPS（SNI 透传）</option>}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-foreground mb-1.5">客户端本地 IP *</label>
+                    <label className="block text-sm font-medium text-foreground mb-1.5">{formData.targetMode === 'direct' ? '目标地址 *' : '客户端本地 IP *'}</label>
                     <input
                       type="text"
-                      value={formData.localIP}
-                      onChange={(e) => setFormData({ ...formData, localIP: e.target.value })}
+                      value={formData.targetMode === 'direct' ? formData.upstreamUrl : formData.localIP}
+                      onChange={(e) => setFormData({ ...formData, [formData.targetMode === 'direct' ? 'upstreamUrl' : 'localIP']: e.target.value })}
+                      placeholder={formData.targetMode === 'direct' ? 'https://origin.example.com:443' : '127.0.0.1'}
                       className="w-full px-4 py-3 border border-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-muted/50 hover:bg-card"
                     />
+                    {formData.targetMode === 'direct' && <p className="text-xs text-muted-foreground mt-2">
+                      HTTP 入口可连接 http:// 或 https:// 目标；HTTPS 透传需使用 https://。仅填写协议、主机和端口。
+                    </p>}
                   </div>
                 </div>
                 {['http', 'https'].includes(formData.type) && (
@@ -1405,7 +1457,7 @@ export default function Proxies() {
                     <p className="text-xs text-muted-foreground mt-2">
                       将域名解析到节点 IP。支持 *.example.com，匹配一级及更深子域名，不含根域名。
                       同协议可共享节点端口：精确域名优先，其次匹配后缀最长的通配符；重复规则不可用。
-                      {formData.type === 'https' ? ' HTTPS 证书由客户端网站管理，按可见 SNI 透传，不支持 HTTP/3。' : ' 按 HTTP Host 分流，支持 WebSocket。'}
+                      {formData.type === 'https' ? ' HTTPS 证书由目标网站管理，按可见 SNI 透传，不支持 HTTP/3。' : ' 按 HTTP Host 分流，支持 WebSocket。'}
                     </p>
                   </div>
                 )}
@@ -1487,7 +1539,7 @@ export default function Proxies() {
                 </div>
                 ) : (
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
+                  {formData.targetMode === 'client' && <div>
                     <label className="block text-sm font-medium text-foreground mb-1.5">客户端本地端口 *</label>
                     <input
                       type="text"
@@ -1499,7 +1551,7 @@ export default function Proxies() {
                     <p className="mt-1.5 text-xs text-muted-foreground">
                       填单个端口则所有代理共用，填范围则与节点端口一一对应
                     </p>
-                  </div>
+                  </div>}
                   <div>
                     <label className="block text-sm font-medium text-foreground mb-1.5">节点端口 *</label>
                     <input

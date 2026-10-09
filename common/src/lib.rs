@@ -4,6 +4,7 @@
 //! 包括隧道协议抽象、KCP 配置和协议类型定义。
 
 pub mod domain;
+pub mod upstream;
 pub mod tunnel;
 pub mod config;
 pub mod utils;

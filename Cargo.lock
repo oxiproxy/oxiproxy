@@ -2236,12 +2236,14 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tokio-util",
  "tonic",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "webpki-roots 0.26.11",
  "windows-sys 0.59.0",
 ]
 

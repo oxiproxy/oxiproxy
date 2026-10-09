@@ -12,6 +12,8 @@ hyper = { version = "1", features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
+tokio-rustls = "0.26"
+webpki-roots = { workspace = true }
 
 # Shared
 common = { workspace = true }

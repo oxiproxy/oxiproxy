@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Result};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter};
+use sea_orm::{
+    ColumnTrait, Condition, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+};
 
 use crate::entity::{proxy, Proxy, User};
 
@@ -107,21 +109,7 @@ pub async fn validate_user_port_limit(
 
     if let Some(max_count) = final_max_port_count {
         // 查询用户所有客户端的代理数量
-        let user_clients = crate::entity::Client::find()
-            .filter(crate::entity::client::Column::UserId.eq(user_id))
-            .all(db)
-            .await?;
-
-        let client_ids: Vec<i64> = user_clients.iter().map(|c| c.id).collect();
-
-        let proxy_count = if client_ids.is_empty() {
-            0
-        } else {
-            Proxy::find()
-                .filter(proxy::Column::ClientId.is_in(client_ids))
-                .count(db)
-                .await?
-        };
+        let proxy_count = get_user_port_count(user_id, db).await?;
 
         if proxy_count >= max_count as u64 {
             return Ok((
@@ -146,12 +134,16 @@ pub async fn get_user_port_count(user_id: i64, db: &DatabaseConnection) -> Resul
 
     let client_ids: Vec<i64> = user_clients.iter().map(|c| c.id).collect();
 
-    if client_ids.is_empty() {
-        return Ok(0);
-    }
-
     let count = Proxy::find()
-        .filter(proxy::Column::ClientId.is_in(client_ids))
+        .filter(
+            Condition::any()
+                .add(proxy::Column::ClientId.is_in(client_ids))
+                .add(
+                    Condition::all()
+                        .add(proxy::Column::ClientId.is_null())
+                        .add(proxy::Column::UserId.eq(user_id)),
+                ),
+        )
         .count(db)
         .await?;
 

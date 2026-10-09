@@ -1,4 +1,5 @@
 use super::*;
+mod direct;
 use async_trait::async_trait;
 use common::{TunnelConnection, TunnelRecvStream, TunnelSendStream, TunnelStream};
 use tokio::io::{AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf};
@@ -101,6 +102,8 @@ fn config(client: i64, port: u16, backend: u16, kind: &str, domain: &str) -> Pro
         name: domain.into(),
         proxy_type: kind.into(),
         domain: domain.into(),
+        upstream_url: String::new(),
+        user_id: None,
         local_ip: "127.0.0.1".into(),
         local_port: backend,
         remote_port: port,

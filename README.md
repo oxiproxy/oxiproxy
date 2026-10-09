@@ -29,6 +29,7 @@
 | **自动更新** | 支持远程自动更新所有组件，运维便捷 |
 | **流量管控** | 实时流量统计，支持用户配额管理 |
 | **多用户** | 支持多用户、多节点、多客户端、多隧道管理 |
+| **公网反向代理** | Node 直接连接 HTTP/HTTPS 目标，无需安装或创建 Client |
 | **订阅套餐** | 支持订阅套餐，灵活分配节点和流量配额 |
 
 <details>
@@ -817,6 +818,38 @@ cd dashboard && bun run lint                           # 前端检查
 - 初始 HTTP 请求头等待上限为 10 秒、缓冲上限为 32 KiB；TLS ClientHello 等待上限为 10 秒、读取上限为 64 KiB；每个共享端口最多同时接收 1024 条连接。
 
 升级时需同时更新 Controller（含新版面板）和 Node，再创建域名代理。Controller 启动时自动迁移数据库，为旧代理填入空域名；Client 的隧道数据协议不变，无须为此功能更新 Client。Node 版本过旧时不能使用域名代理。升级前请按现有运维流程备份数据库。
+
+#### 公网直连（无需 Client）
+
+在「代理」→「新建代理」将**目标连接方式**设为 **公网直连（无需 Client）**，选择 Node，填写入口域名、节点端口及目标地址。域名解析到 Node IP；Node 直接连接目标，不需要创建客户端或安装 Client。
+
+| 入口类型 | 入口域名 / 节点端口 | 目标地址 | 行为 |
+|----------|--------------------|----------|------|
+| HTTP | app.example.com / 80 | `http://origin.example.net:8080` | 转发到 HTTP 目标 |
+| HTTP | app.example.com / 80 | `https://origin.example.net` | Node 与目标建立 TLS，并校验目标证书 |
+| HTTPS | app.example.com / 443 | `https://origin.example.net:443` | 按入口 SNI 选择目标，原样透传 TLS |
+
+- 目标可填写域名、IPv4 或带方括号的 IPv6，端口省略时使用 HTTP 80 / HTTPS 443。地址仅包含协议、主机和端口，不包含路径前缀、查询参数、片段或登录凭据。请求路径、查询参数和正文会保留，HTTP 支持流式传输及 WebSocket。
+- HTTP 直连使用目标地址作为上游 `Host`，HTTPS 上游连接使用目标主机验证证书；同时设置 `X-Forwarded-Host`、`X-Forwarded-For`、`X-Forwarded-Proto`，覆盖请求中同名的值。
+- HTTPS 入口仍是 SNI 透传，Node 不终止网站 TLS，也不改写 SNI。目标服务必须能处理入口域名，且网站证书必须覆盖入口域名。不能通过此模式把 HTTPS 入口转为明文 HTTP 目标；公网直连也不提供节点网站证书终止或 HTTP/3。
+- 公网直连可与同协议的 Client 域名代理共享节点端口，仍支持精确域名和通配符及已有冲突检查。TCP/UDP 和代理组使用 Client 隧道模式。
+- 规则归创建用户所有，计入用户端口配额和节点代理配额；流量计入代理、每日统计、所属用户和 Node，不创建虚拟 Client。新请求会检查用户及节点流量配额，超限时 HTTP 返回 403；Controller 无法完成检查时返回 503，上游连接或 TLS 失败返回 502。
+- 修改目标、启用/禁用和删除会同步节点监听；Node 启动或重新连接 Controller 时自动恢复启用的公网规则并移除失效规则。连接方式在编辑时固定，需要切换时新建规则。
+
+API 示例（需已登录，并将 `nodeId` 替换为在线节点 ID）：
+
+```json
+{
+  "name": "public-web",
+  "type": "http",
+  "domain": "app.example.com",
+  "nodeId": 1,
+  "remotePort": 80,
+  "upstreamUrl": "https://origin.example.net"
+}
+```
+
+升级 Controller（包含面板）和 Node 后可使用此功能，升级前备份数据库。已有 Client 规则和配置保持兼容。源码验证可在构建面板及 `cargo build -p controller -p node` 后运行 `python3 tests/direct_proxy_e2e.py`；加 `--public-origin https://example.com` 可测试真实公网 HTTPS 目标。验证程序只启动临时 Controller/Node，不创建 Client，并自动清理测试状态。
 
 ### 重启 Controller、Node 和 Client
 
