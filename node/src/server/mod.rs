@@ -12,7 +12,6 @@ pub mod speed_limiter;
 
 use anyhow::Result;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::{info, error, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 use common::protocol::control::ProxyControl;
@@ -58,12 +57,23 @@ pub async fn run_server_controller_mode(
     info!("隧道协议: {}", protocol);
 
     // 首次连接 Controller 并认证（protocol 作为回退值，最终以 Controller 返回为准）
-    let (grpc_client, cmd_rx, authoritative_protocol, initial_speed_limit, bind_port, node_certificate) = grpc_client::AgentGrpcClient::connect_and_authenticate(
-        &controller_url,
-        &token,
-        &protocol,
-        tls_ca_cert.as_deref(),
-    ).await?;
+    let mut backoff = ReconnectBackoff::default_params();
+    let (grpc_client, cmd_rx, authoritative_protocol, initial_speed_limit, bind_port, node_certificate) = loop {
+        match grpc_client::AgentGrpcClient::connect_and_authenticate(
+            &controller_url,
+            &token,
+            &protocol,
+            tls_ca_cert.as_deref(),
+        ).await {
+            Ok(connection) => break connection,
+            Err(e) => {
+                let delay = backoff.next_delay();
+                error!("首次连接 Controller 失败: {}", e);
+                warn!("{:.1}s 后重试...", delay.as_secs_f32());
+                tokio::time::sleep(delay).await;
+            }
+        }
+    };
 
     let node_id = grpc_client.node_id().await;
     info!("连接认证成功: 节点 #{}, Controller 协议: {}, 隧道端口: {}", node_id, authoritative_protocol, bind_port);
@@ -144,71 +154,58 @@ pub async fn run_server_controller_mode(
     let tls_ca_cert_clone = tls_ca_cert.clone();
 
     tokio::spawn(async move {
-        // 等待首次连接的心跳/消息循环结束（通过检测 sender 是否可用）
-        // 使用简单的轮询检测连接状态
+        // 接收流结束或心跳超时立即唤醒，不以本地队列发送成功判断远端存活。
         loop {
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            grpc_client_reconnect.wait_for_disconnect().await;
+            warn!("检测到 gRPC 连接断开，开始重连...");
 
-            // 尝试发送一个心跳来检测连接是否存活
-            let test_msg = common::grpc::oxiproxy::AgentServerMessage {
-                payload: Some(common::grpc::oxiproxy::agent_server_message::Payload::Heartbeat(
-                    common::grpc::oxiproxy::Heartbeat {
-                        timestamp: chrono::Utc::now().timestamp(),
-                    },
-                )),
-            };
+            let mut backoff = ReconnectBackoff::default_params();
+            loop {
+                match grpc_client_reconnect.reconnect(
+                    &controller_url_clone,
+                    &token_clone,
+                    &protocol_clone,
+                    tls_ca_cert_clone.as_deref(),
+                ).await {
+                    Ok((new_cmd_rx, new_protocol, new_speed_limit, new_tunnel_port, new_certificate)) => {
+                        info!("gRPC 重连成功");
 
-            if grpc_client_reconnect.shared_sender().send(test_msg).await.is_err() {
-                warn!("检测到 gRPC 连接断开，开始重连...");
-
-                let mut backoff = ReconnectBackoff::default_params();
-                loop {
-                    match grpc_client_reconnect.reconnect(
-                        &controller_url_clone,
-                        &token_clone,
-                        &protocol_clone,
-                        tls_ca_cert_clone.as_deref(),
-                    ).await {
-                        Ok((new_cmd_rx, new_protocol, new_speed_limit, new_tunnel_port, new_certificate)) => {
-                            info!("gRPC 重连成功");
-
-                            // 如果收到新证书，记录日志（暂不支持热更新证书，需要重启隧道）
-                            if let Some(cert) = new_certificate {
-                                info!("⚠️  收到新证书（指纹: {}），需要重启 Node 以应用", cert.fingerprint);
-                            }
-
-                            // 更新速度限制
-                            if let Some(limit) = new_speed_limit {
-                                speed_limiter_reconnect.update_rate(limit as u64);
-                            }
-
-                            // 如果协议或端口变更，重启隧道
-                            if !new_protocol.is_empty() {
-                                tunnel_manager_reconnect.update_port(new_tunnel_port);
-                                if let Err(e) = tunnel_manager_reconnect.switch_protocol(&new_protocol).await {
-                                    error!("重连后切换协议失败: {}", e);
-                                }
-                            }
-
-                            // 启动新的命令处理器
-                            let grpc_clone = grpc_client_reconnect.clone();
-                            let control_clone = proxy_control_reconnect.clone();
-                            let tm_clone = tunnel_manager_reconnect.clone();
-                            let sl_clone = speed_limiter_reconnect.clone();
-                            tokio::spawn(async move {
-                                grpc_client::handle_controller_commands(
-                                    new_cmd_rx, grpc_clone, control_clone, tm_clone, sl_clone,
-                                ).await;
-                            });
-
-                            break;
+                        // 如果收到新证书，记录日志（暂不支持热更新证书，需要重启隧道）
+                        if let Some(cert) = new_certificate {
+                            info!("⚠️  收到新证书（指纹: {}），需要重启 Node 以应用", cert.fingerprint);
                         }
-                        Err(e) => {
-                            let delay = backoff.next_delay();
-                            error!("gRPC 重连失败: {}", e);
-                            warn!("{:.1}s 后重试...", delay.as_secs_f32());
-                            tokio::time::sleep(delay).await;
+
+                        // 更新速度限制
+                        if let Some(limit) = new_speed_limit {
+                            speed_limiter_reconnect.update_rate(limit as u64);
                         }
+
+                        // 如果协议或端口变更，重启隧道
+                        if !new_protocol.is_empty() {
+                            tunnel_manager_reconnect.update_port(new_tunnel_port);
+                            if let Err(e) = tunnel_manager_reconnect.switch_protocol(&new_protocol).await {
+                                error!("重连后切换协议失败: {}", e);
+                            }
+                        }
+
+                        // 启动新的命令处理器
+                        let grpc_clone = grpc_client_reconnect.clone();
+                        let control_clone = proxy_control_reconnect.clone();
+                        let tm_clone = tunnel_manager_reconnect.clone();
+                        let sl_clone = speed_limiter_reconnect.clone();
+                        tokio::spawn(async move {
+                            grpc_client::handle_controller_commands(
+                                new_cmd_rx, grpc_clone, control_clone, tm_clone, sl_clone,
+                            ).await;
+                        });
+
+                        break;
+                    }
+                    Err(e) => {
+                        let delay = backoff.next_delay();
+                        error!("gRPC 重连失败: {}", e);
+                        warn!("{:.1}s 后重试...", delay.as_secs_f32());
+                        tokio::time::sleep(delay).await;
                     }
                 }
             }

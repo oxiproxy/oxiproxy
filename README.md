@@ -108,6 +108,10 @@ curl -fsSL https://raw.githubusercontent.com/oxiproxy/oxiproxy/master/install.sh
 /opt/oxiproxy/client start --controller-url http://your-server-ip:3100 --token <client-token>
 ```
 
+Client 和 Node 每 15 秒向 Controller 发送心跳，连续 45 秒未收到心跳响应会关闭旧连接并自动重连。
+首次连接失败也会持续重试；重试间隔从 1 秒指数增长至 60 秒，并加入 ±20% 抖动。
+升级重连逻辑需要更新 Client 和 Node 二进制，仅更新 Controller 不会改变旧版本客户端的行为。
+
 ### 使用示例
 
 在 Web 管理界面创建隧道后，即可通过 Node 的公网 IP 访问内网服务：

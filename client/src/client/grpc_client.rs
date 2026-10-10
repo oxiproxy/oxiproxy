@@ -4,7 +4,7 @@
 
 use anyhow::{anyhow, Result};
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_stream::StreamExt;
 use tonic::transport::{Channel, ClientTlsConfig};
 use tracing::{error, info, warn, debug};
@@ -14,12 +14,17 @@ use common::grpc::oxiproxy;
 use common::grpc::oxiproxy::agent_client_message::Payload as ClientPayload;
 use common::grpc::oxiproxy::controller_to_client_message::Payload as ControllerPayload;
 use common::grpc::AgentClientServiceClient;
+use common::grpc::connection::{self, AUTH_TIMEOUT};
 use common::protocol::client_config::{
     ProxyInfo as ClientProxyInfo, ServerProxyGroup as ClientServerProxyGroup,
 };
 use common::TunnelProtocol;
 
 use super::log_collector::LogCollector;
+
+#[cfg(test)]
+#[path = "grpc_client_tests.rs"]
+mod tests;
 
 /// 连接 Controller 并认证，返回代理列表更新的接收器
 pub async fn connect_and_run(
@@ -33,7 +38,8 @@ pub async fn connect_and_run(
         .connect_timeout(Duration::from_secs(10))
         .tcp_keepalive(Some(Duration::from_secs(60)))
         .http2_keep_alive_interval(Duration::from_secs(30))
-        .keep_alive_timeout(Duration::from_secs(10));
+        .keep_alive_timeout(Duration::from_secs(10))
+        .keep_alive_while_idle(true);
 
     if controller_url.starts_with("https://") {
         // 从 URL 中提取域名用于 SNI
@@ -89,9 +95,9 @@ pub async fn connect_and_run(
     let mut inbound = response.into_inner();
 
     // 读取认证响应
-    let first_msg = inbound
-        .next()
+    let first_msg = tokio::time::timeout(AUTH_TIMEOUT, inbound.next())
         .await
+        .map_err(|_| anyhow!("等待认证响应超时"))?
         .ok_or_else(|| anyhow!("未收到认证响应"))?
         .map_err(|e| anyhow!("读取认证响应失败: {}", e))?;
 
@@ -114,17 +120,18 @@ pub async fn connect_and_run(
     let client_name = auth_resp.client_name.clone();
     info!("客户端认证成功: {} (ID: {})", client_name, client_id);
 
-    // 启动消息接收循环
-    let response_tx = tx.clone();
-    tokio::spawn(async move {
-        message_loop(inbound, update_tx, response_tx, log_collector).await;
-    });
-
-    // 启动心跳
-    let heartbeat_tx = tx.clone();
-    tokio::spawn(async move {
-        heartbeat_loop(heartbeat_tx).await;
-    });
+    // 心跳失败或接收流结束时同时关闭本次连接的任务，释放 update_tx 触发重连。
+    let (heartbeat_tx, heartbeat_rx) = watch::channel(tokio::time::Instant::now());
+    connection::supervise(
+        message_loop(inbound, update_tx, tx.clone(), log_collector, heartbeat_tx),
+        tx,
+        heartbeat_rx,
+        || oxiproxy::AgentClientMessage {
+            payload: Some(ClientPayload::Heartbeat(oxiproxy::Heartbeat {
+                timestamp: chrono::Utc::now().timestamp(),
+            })),
+        },
+    );
 
     Ok((client_id, client_name, update_rx))
 }
@@ -135,6 +142,7 @@ async fn message_loop(
     update_tx: mpsc::Sender<Vec<ClientServerProxyGroup>>,
     response_tx: mpsc::Sender<oxiproxy::AgentClientMessage>,
     log_collector: LogCollector,
+    heartbeat_tx: watch::Sender<tokio::time::Instant>,
 ) {
     while let Some(result) = inbound.next().await {
         let msg = match result {
@@ -152,7 +160,7 @@ async fn message_loop(
 
         match payload {
             ControllerPayload::HeartbeatResponse(_) => {
-                // 心跳响应，忽略
+                heartbeat_tx.send_replace(tokio::time::Instant::now());
             }
 
             ControllerPayload::ProxyUpdate(update) => {
@@ -199,33 +207,37 @@ async fn message_loop(
             }
 
             ControllerPayload::SoftwareUpdate(cmd) => {
-                info!("收到远程软件更新指令，开始更新...");
-                let update_result = tokio::task::spawn_blocking(perform_client_self_update).await;
-                let (success, error_msg, new_ver) = match update_result {
-                    Ok(Ok(v)) => (true, None, Some(v)),
-                    Ok(Err(e)) => (false, Some(e.to_string()), None),
-                    Err(e) => (false, Some(e.to_string()), None),
-                };
+                // 下载更新不能阻塞接收循环，否则会延迟心跳响应的处理。
+                let response_tx = response_tx.clone();
+                tokio::spawn(async move {
+                    info!("收到远程软件更新指令，开始更新...");
+                    let update_result = tokio::task::spawn_blocking(perform_client_self_update).await;
+                    let (success, error_msg, new_ver) = match update_result {
+                        Ok(Ok(v)) => (true, None, Some(v)),
+                        Ok(Err(e)) => (false, Some(e.to_string()), None),
+                        Err(e) => (false, Some(e.to_string()), None),
+                    };
 
-                let resp_msg = oxiproxy::AgentClientMessage {
-                    payload: Some(ClientPayload::Response(oxiproxy::AgentClientResponse {
-                        request_id: cmd.request_id,
-                        result: Some(oxiproxy::agent_client_response::Result::SoftwareUpdate(
-                            oxiproxy::SoftwareUpdateResponse {
-                                success,
-                                error: error_msg,
-                                new_version: new_ver,
-                            },
-                        )),
-                    })),
-                };
+                    let resp_msg = oxiproxy::AgentClientMessage {
+                        payload: Some(ClientPayload::Response(oxiproxy::AgentClientResponse {
+                            request_id: cmd.request_id,
+                            result: Some(oxiproxy::agent_client_response::Result::SoftwareUpdate(
+                                oxiproxy::SoftwareUpdateResponse {
+                                    success,
+                                    error: error_msg,
+                                    new_version: new_ver,
+                                },
+                            )),
+                        })),
+                    };
 
-                let _ = response_tx.send(resp_msg).await;
-                if success {
-                    info!("软件更新成功，3秒后重启...");
-                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                    restart_self();
-                }
+                    let _ = response_tx.send(resp_msg).await;
+                    if success {
+                        info!("软件更新成功，3秒后重启...");
+                        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                        restart_self();
+                    }
+                });
             }
 
             ControllerPayload::Restart(cmd) => {
@@ -255,27 +267,6 @@ async fn message_loop(
     }
 
     warn!("gRPC 连接断开");
-}
-
-/// 心跳循环
-async fn heartbeat_loop(sender: mpsc::Sender<oxiproxy::AgentClientMessage>) {
-    let mut interval = tokio::time::interval(Duration::from_secs(15));
-    interval.tick().await; // 跳过首次
-
-    loop {
-        interval.tick().await;
-
-        let msg = oxiproxy::AgentClientMessage {
-            payload: Some(ClientPayload::Heartbeat(oxiproxy::Heartbeat {
-                timestamp: chrono::Utc::now().timestamp(),
-            })),
-        };
-
-        if sender.send(msg).await.is_err() {
-            warn!("心跳发送失败，连接可能已断开");
-            break;
-        }
-    }
 }
 
 /// 将 gRPC ServerProxyGroup 转换为 client_config::ServerProxyGroup

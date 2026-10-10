@@ -1,4 +1,5 @@
 pub mod pending_requests;
+pub mod connection;
 
 // 导出 proto 生成的代码
 pub mod oxiproxy {

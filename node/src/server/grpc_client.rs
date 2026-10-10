@@ -5,7 +5,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 use anyhow::{anyhow, Result};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, watch, RwLock};
+use tokio_util::sync::CancellationToken;
 use tokio_stream::StreamExt;
 use tonic::transport::{Channel, ClientTlsConfig};
 use tracing::{error, info, warn};
@@ -16,7 +17,12 @@ use common::grpc::oxiproxy::controller_to_agent_message::Payload as ControllerPa
 use common::grpc::oxiproxy::agent_server_response::Result as AgentResult;
 use common::grpc::AgentServerServiceClient;
 use common::grpc::pending_requests::PendingRequests;
+use common::grpc::connection::{self, AUTH_TIMEOUT, SEND_TIMEOUT};
 use common::protocol::control::{ProxyControl, LogEntry};
+
+#[cfg(test)]
+#[path = "grpc_client_tests.rs"]
+mod tests;
 
 /// gRPC 流发送器类型
 pub type GrpcSender = mpsc::Sender<oxiproxy::AgentServerMessage>;
@@ -36,8 +42,15 @@ impl SharedGrpcSender {
 
     /// 发送消息（使用当前 sender）
     pub async fn send(&self, msg: oxiproxy::AgentServerMessage) -> Result<(), mpsc::error::SendError<oxiproxy::AgentServerMessage>> {
-        let sender = self.inner.read().await;
-        sender.send(msg).await
+        // 不跨网络背压持有读锁，否则重连无法替换 sender。
+        let sender = self.inner.read().await.clone();
+        match tokio::time::timeout(SEND_TIMEOUT, sender.reserve_owned()).await {
+            Ok(Ok(permit)) => {
+                permit.send(msg);
+                Ok(())
+            }
+            _ => Err(mpsc::error::SendError(msg)),
+        }
     }
 
     /// 重连后替换内部 sender
@@ -86,6 +99,8 @@ pub struct AgentGrpcClient {
     shared_pending: SharedPendingRequests,
     /// 节点 ID（连接认证后获得）
     node_id: RwLock<i64>,
+    /// 当前连接结束的通知；每次重连使用独立的生命周期。
+    disconnected: RwLock<CancellationToken>,
 }
 
 /// 节点证书数据
@@ -116,35 +131,7 @@ impl AgentGrpcClient {
         tunnel_protocol: &str,
         tls_ca_cert: Option<&[u8]>,
     ) -> Result<(Arc<Self>, mpsc::Receiver<ControllerCommand>, String, Option<i64>, u16, Option<NodeCertificate>)> {
-        let mut endpoint = Channel::from_shared(controller_url.to_string())?
-            .timeout(Duration::from_secs(30))
-            .connect_timeout(Duration::from_secs(10))
-            .tcp_keepalive(Some(Duration::from_secs(60)))
-            .http2_keep_alive_interval(Duration::from_secs(30))
-            .keep_alive_timeout(Duration::from_secs(10));
-
-        if controller_url.starts_with("https://") {
-            // 从 URL 中提取域名用于 SNI
-            let domain = controller_url
-                .trim_start_matches("https://")
-                .split(':')
-                .next()
-                .ok_or_else(|| anyhow!("无法从 URL 提取域名"))?;
-
-            let mut tls_config = ClientTlsConfig::new()
-                .domain_name(domain)
-                .with_webpki_roots();
-
-            if let Some(ca_pem) = tls_ca_cert {
-                info!("使用自定义 CA 证书进行 TLS 验证");
-                tls_config = tls_config.ca_certificate(
-                    tonic::transport::Certificate::from_pem(ca_pem)
-                );
-            }
-
-            endpoint = endpoint.tls_config(tls_config)
-                .map_err(|e| anyhow!("TLS 配置失败: {}", e))?;
-        }
+        let endpoint = controller_endpoint(controller_url, tls_ca_cert)?;
 
         let channel = endpoint.connect()
             .await
@@ -177,7 +164,8 @@ impl AgentGrpcClient {
         let mut inbound = response.into_inner();
 
         // 读取认证响应
-        let first_msg = inbound.next().await
+        let first_msg = tokio::time::timeout(AUTH_TIMEOUT, inbound.next()).await
+            .map_err(|_| anyhow!("等待认证响应超时"))?
             .ok_or_else(|| anyhow!("未收到认证响应"))?
             .map_err(|e| anyhow!("读取认证响应失败: {}", e))?;
 
@@ -209,24 +197,12 @@ impl AgentGrpcClient {
         let shared_sender = SharedGrpcSender::new(tx.clone());
         let shared_pending = SharedPendingRequests::new(pending.clone());
 
+        let disconnected = Self::start_session(inbound, pending, cmd_tx, tx, node_id);
         let grpc_client = Arc::new(Self {
             shared_sender,
             shared_pending,
             node_id: RwLock::new(node_id),
-        });
-
-        // 启动消息接收循环
-        let pending_clone = pending.clone();
-        let cmd_tx_clone = cmd_tx.clone();
-
-        tokio::spawn(async move {
-            Self::message_loop(inbound, pending_clone, cmd_tx_clone, tx, node_id).await;
-        });
-
-        // 启动心跳
-        let heartbeat_sender = grpc_client.shared_sender.clone();
-        tokio::spawn(async move {
-            Self::shared_heartbeat_loop(heartbeat_sender).await;
+            disconnected: RwLock::new(disconnected),
         });
 
         Ok((grpc_client, cmd_rx, authoritative_protocol, speed_limit, tunnel_port, node_certificate))
@@ -242,29 +218,7 @@ impl AgentGrpcClient {
         tunnel_protocol: &str,
         tls_ca_cert: Option<&[u8]>,
     ) -> Result<(mpsc::Receiver<ControllerCommand>, String, Option<i64>, u16, Option<NodeCertificate>)> {
-        let mut endpoint = Channel::from_shared(controller_url.to_string())?;
-
-        if controller_url.starts_with("https://") {
-            // 从 URL 中提取域名用于 SNI
-            let domain = controller_url
-                .trim_start_matches("https://")
-                .split(':')
-                .next()
-                .ok_or_else(|| anyhow!("无法从 URL 提取域名"))?;
-
-            let mut tls_config = ClientTlsConfig::new()
-                .domain_name(domain)
-                .with_webpki_roots();
-
-            if let Some(ca_pem) = tls_ca_cert {
-                tls_config = tls_config.ca_certificate(
-                    tonic::transport::Certificate::from_pem(ca_pem)
-                );
-            }
-
-            endpoint = endpoint.tls_config(tls_config)
-                .map_err(|e| anyhow!("TLS 配置失败: {}", e))?;
-        }
+        let endpoint = controller_endpoint(controller_url, tls_ca_cert)?;
 
         let channel = endpoint.connect()
             .await
@@ -297,7 +251,8 @@ impl AgentGrpcClient {
         let mut inbound = response.into_inner();
 
         // 读取认证响应
-        let first_msg = inbound.next().await
+        let first_msg = tokio::time::timeout(AUTH_TIMEOUT, inbound.next()).await
+            .map_err(|_| anyhow!("等待认证响应超时"))?
             .ok_or_else(|| anyhow!("未收到认证响应"))?
             .map_err(|e| anyhow!("读取认证响应失败: {}", e))?;
 
@@ -331,19 +286,8 @@ impl AgentGrpcClient {
         self.shared_pending.replace(pending.clone()).await;
         *self.node_id.write().await = node_id;
 
-        // 启动新的消息接收循环
-        let pending_clone = pending.clone();
-        let cmd_tx_clone = cmd_tx.clone();
-
-        tokio::spawn(async move {
-            Self::message_loop(inbound, pending_clone, cmd_tx_clone, tx, node_id).await;
-        });
-
-        // 启动新的心跳（旧的会因为 sender 被替换而自动停止）
-        let heartbeat_sender = self.shared_sender.clone();
-        tokio::spawn(async move {
-            Self::shared_heartbeat_loop(heartbeat_sender).await;
-        });
+        let disconnected = Self::start_session(inbound, pending, cmd_tx, tx, node_id);
+        *self.disconnected.write().await = disconnected;
 
         Ok((cmd_rx, authoritative_protocol, speed_limit, tunnel_port, node_certificate))
     }
@@ -353,7 +297,7 @@ impl AgentGrpcClient {
         mut inbound: tonic::Streaming<oxiproxy::ControllerToAgentMessage>,
         pending: PendingRequests<ControllerResponse>,
         cmd_tx: mpsc::Sender<ControllerCommand>,
-        _tx: GrpcSender,
+        heartbeat_tx: watch::Sender<tokio::time::Instant>,
         node_id: i64,
     ) {
         while let Some(result) = inbound.next().await {
@@ -372,7 +316,7 @@ impl AgentGrpcClient {
 
             match payload {
                 ControllerPayload::HeartbeatResponse(_) => {
-                    // 心跳响应，忽略
+                    heartbeat_tx.send_replace(tokio::time::Instant::now());
                 }
 
                 ControllerPayload::ValidateTokenResponse(resp) => {
@@ -490,25 +434,30 @@ impl AgentGrpcClient {
         warn!("节点 #{} gRPC 连接断开", node_id);
     }
 
-    /// 心跳循环（使用 SharedGrpcSender）
-    async fn shared_heartbeat_loop(sender: SharedGrpcSender) {
-        let mut interval = tokio::time::interval(Duration::from_secs(15));
-        interval.tick().await; // 跳过首次
-
-        loop {
-            interval.tick().await;
-
-            let msg = oxiproxy::AgentServerMessage {
+    /// 心跳绑定原始 sender，禁止旧连接的任务跟随 SharedGrpcSender 进入新连接。
+    fn start_session(
+        inbound: tonic::Streaming<oxiproxy::ControllerToAgentMessage>,
+        pending: PendingRequests<ControllerResponse>,
+        cmd_tx: mpsc::Sender<ControllerCommand>,
+        tx: GrpcSender,
+        node_id: i64,
+    ) -> CancellationToken {
+        let (heartbeat_tx, heartbeat_rx) = watch::channel(tokio::time::Instant::now());
+        connection::supervise(
+            Self::message_loop(inbound, pending, cmd_tx, heartbeat_tx, node_id),
+            tx,
+            heartbeat_rx,
+            || oxiproxy::AgentServerMessage {
                 payload: Some(AgentPayload::Heartbeat(oxiproxy::Heartbeat {
                     timestamp: chrono::Utc::now().timestamp(),
                 })),
-            };
+            },
+        )
+    }
 
-            if sender.send(msg).await.is_err() {
-                warn!("心跳发送失败，连接可能已断开");
-                break;
-            }
-        }
+    pub async fn wait_for_disconnect(&self) {
+        let disconnected = self.disconnected.read().await.clone();
+        disconnected.cancelled().await;
     }
 
     /// 获取节点 ID
@@ -1024,4 +973,42 @@ fn perform_node_self_update() -> anyhow::Result<String> {
         self_update::Status::UpToDate(v) => Ok(v),
         self_update::Status::Updated(v) => Ok(v),
     }
+}
+
+/// 首次连接和重连必须使用相同的超时、保活和 TLS 设置。
+fn controller_endpoint(
+    controller_url: &str,
+    tls_ca_cert: Option<&[u8]>,
+) -> Result<tonic::transport::Endpoint> {
+    let mut endpoint = Channel::from_shared(controller_url.to_string())?
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .tcp_keepalive(Some(Duration::from_secs(60)))
+        .http2_keep_alive_interval(Duration::from_secs(30))
+        .keep_alive_timeout(Duration::from_secs(10))
+        .keep_alive_while_idle(true);
+
+    if controller_url.starts_with("https://") {
+        // 从 URL 中提取域名用于 SNI
+        let domain = controller_url
+            .trim_start_matches("https://")
+            .split(':')
+            .next()
+            .ok_or_else(|| anyhow!("无法从 URL 提取域名"))?;
+
+        let mut tls_config = ClientTlsConfig::new()
+            .domain_name(domain)
+            .with_webpki_roots();
+
+        if let Some(ca_pem) = tls_ca_cert {
+            info!("使用自定义 CA 证书进行 TLS 验证");
+            tls_config = tls_config.ca_certificate(tonic::transport::Certificate::from_pem(ca_pem));
+        }
+
+        endpoint = endpoint
+            .tls_config(tls_config)
+            .map_err(|e| anyhow!("TLS 配置失败: {}", e))?;
+    }
+
+    Ok(endpoint)
 }
