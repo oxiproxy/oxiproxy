@@ -835,28 +835,11 @@ fn start_client_health_monitor(client_stream_manager: Arc<client_stream_manager:
         loop {
             interval.tick().await;
 
-            let results = client_stream_manager.check_all_clients().await;
-            let db = get_connection().await;
-
-            for (client_id, is_online) in results {
-                if let Ok(Some(client)) = entity::Client::find_by_id(client_id).one(db).await {
-                    let was_online = client.is_online;
-                    if was_online != is_online {
-                        if is_online {
-                            info!("客户端 #{} ({}) 已上线", client_id, client.name);
-                        } else {
-                            tracing::warn!("客户端 #{} ({}) 已离线", client_id, client.name);
-                        }
-                    }
-
-                    let mut active: entity::client::ActiveModel = client.into();
-                    active.is_online = Set(is_online);
-                    if is_online {
-                        active.last_online_at = Set(Some(Utc::now().naive_utc()));
-                    }
-                    active.updated_at = Set(Utc::now().naive_utc());
-                    let _ = active.update(db).await;
-                }
+            if let Err(error) = client_stream_manager
+                .sync_online_status(get_connection().await)
+                .await
+            {
+                tracing::error!(%error, "同步客户端在线状态失败");
             }
         }
     });

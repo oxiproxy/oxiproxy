@@ -21,7 +21,10 @@ pub struct CreateClientRequest {
     pub traffic_quota_gb: Option<f64>,
 }
 
-pub async fn list_clients(Extension(auth_user_opt): Extension<Option<AuthUser>>) -> impl IntoResponse {
+pub async fn list_clients(
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
+    Extension(app_state): Extension<crate::AppState>,
+) -> impl IntoResponse {
     let auth_user = match auth_user_opt {
         Some(user) => user,
         None => return (StatusCode::UNAUTHORIZED, ApiResponse::<Vec<crate::entity::client::Model>>::error("Not authenticated".to_string())),
@@ -29,7 +32,7 @@ pub async fn list_clients(Extension(auth_user_opt): Extension<Option<AuthUser>>)
 
     let db = get_connection().await;
 
-    let clients = if auth_user.is_admin {
+    let mut clients = if auth_user.is_admin {
         // Admin can see all clients
         match Client::find().all(db).await {
             Ok(clients) => clients,
@@ -63,6 +66,10 @@ pub async fn list_clients(Extension(auth_user_opt): Extension<Option<AuthUser>>)
         }
     };
 
+    app_state
+        .client_stream_manager
+        .apply_online_status(&mut clients)
+        .await;
     (StatusCode::OK, ApiResponse::success(clients))
 }
 

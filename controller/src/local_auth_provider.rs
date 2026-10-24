@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use tracing::debug;
 
 use common::protocol::auth::{
@@ -71,13 +71,10 @@ impl ClientAuthProvider for LocalControllerAuthProvider {
     }
 
     async fn set_client_online(&self, client_id: i64, online: bool) -> Result<()> {
-        let db = get_connection().await;
-        if let Some(client) = Client::find_by_id(client_id).one(db).await? {
-            let mut client_active: client::ActiveModel = client.into();
-            client_active.is_online = Set(online);
-            debug!("更新客户端 #{} 状态: online={}", client_id, online);
-            let _ = client_active.update(db).await;
-        }
+        // Legacy nodes report one tunnel's status here. A tunnel disconnect must
+        // not override the client's independent Controller session, especially
+        // when the same client uses multiple nodes. Acknowledge for compatibility.
+        debug!("节点上报客户端 #{} 隧道状态: online={}（全局状态由控制连接维护）", client_id, online);
         Ok(())
     }
 

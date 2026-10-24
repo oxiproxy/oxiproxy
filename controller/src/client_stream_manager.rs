@@ -6,16 +6,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use chrono::Utc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 
 use common::grpc::oxiproxy;
 use common::grpc::pending_requests::PendingRequests;
 use common::KcpConfig;
 use common::protocol::control::LogEntry;
 
-use crate::entity::{Client, Node, Proxy, proxy, node};
+use crate::entity::{Client, Node, Proxy, client, proxy, node};
 use crate::migration::get_connection;
 use crate::certificate_manager::CertificateManager;
 
@@ -44,19 +45,78 @@ impl ClientStreamManager {
         &self,
         client_id: i64,
         tx: mpsc::Sender<Result<oxiproxy::ControllerToClientMessage, tonic::Status>>,
-    ) {
+        db: &DatabaseConnection,
+    ) -> anyhow::Result<()> {
         info!("Agent Client #{} 已连接", client_id);
         let stream = ClientStream {
             tx,
             pending: PendingRequests::new(),
         };
-        self.streams.write().await.insert(client_id, stream);
+        let mut streams = self.streams.write().await;
+        streams.insert(client_id, stream);
+        // Keep persistence ordered with reconnects and the health monitor.
+        Self::persist_online_status(db, client_id, true).await
     }
 
-    /// 移除一个 Agent Client 流
-    pub async fn unregister(&self, client_id: i64) {
+    /// Only the current session may remove its stream or mark the client offline.
+    pub async fn unregister(
+        &self,
+        client_id: i64,
+        tx: &mpsc::Sender<Result<oxiproxy::ControllerToClientMessage, tonic::Status>>,
+        db: &DatabaseConnection,
+    ) -> anyhow::Result<()> {
+        let mut streams = self.streams.write().await;
+        if !streams
+            .get(&client_id)
+            .is_some_and(|stream| stream.tx.same_channel(tx))
+        {
+            return Ok(());
+        }
+        streams.remove(&client_id);
         info!("Agent Client #{} 已断开", client_id);
-        self.streams.write().await.remove(&client_id);
+        Self::persist_online_status(db, client_id, false).await
+    }
+
+    async fn persist_online_status(
+        db: &DatabaseConnection,
+        client_id: i64,
+        online: bool,
+    ) -> anyhow::Result<()> {
+        let now = Utc::now().naive_utc();
+        let mut active = client::ActiveModel {
+            id: Set(client_id),
+            is_online: Set(online),
+            updated_at: Set(now),
+            ..Default::default()
+        };
+        if online {
+            active.last_online_at = Set(Some(now));
+        }
+        active.update(db).await?;
+        Ok(())
+    }
+
+    /// Read live control sessions instead of a possibly stale database snapshot.
+    pub async fn apply_online_status(&self, clients: &mut [client::Model]) {
+        let streams = self.streams.read().await;
+        for client in clients {
+            client.is_online = streams
+                .get(&client.id)
+                .is_some_and(|stream| !stream.tx.is_closed());
+        }
+    }
+
+    /// Serialize periodic writes with connection registration and cleanup.
+    pub async fn sync_online_status(&self, db: &DatabaseConnection) -> anyhow::Result<()> {
+        let clients = Client::find().all(db).await?;
+        for client in clients {
+            let streams = self.streams.read().await;
+            let online = streams
+                .get(&client.id)
+                .is_some_and(|stream| !stream.tx.is_closed());
+            Self::persist_online_status(db, client.id, online).await?;
+        }
+        Ok(())
     }
 
     /// 通知指定客户端代理配置已变更
@@ -122,7 +182,7 @@ impl ClientStreamManager {
     /// 健康检查所有客户端
     pub async fn check_all_clients(&self) -> Vec<(i64, bool)> {
         let db = get_connection().await;
-        let all_clients = match Client::find().all(db).await {
+        let mut all_clients = match Client::find().all(db).await {
             Ok(clients) => clients,
             Err(e) => {
                 error!("查询客户端列表失败: {}", e);
@@ -130,14 +190,10 @@ impl ClientStreamManager {
             }
         };
 
-        let streams = self.streams.read().await;
-
+        self.apply_online_status(&mut all_clients).await;
         all_clients
             .into_iter()
-            .map(|client| {
-                let is_online = streams.contains_key(&client.id);
-                (client.id, is_online)
-            })
+            .map(|client| (client.id, client.is_online))
             .collect()
     }
 
@@ -352,3 +408,6 @@ impl ClientStreamManager {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

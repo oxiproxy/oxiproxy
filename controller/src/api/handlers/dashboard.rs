@@ -27,6 +27,7 @@ pub struct UserTrafficStats {
 pub async fn get_user_dashboard_stats(
     axum::extract::Path(user_id): axum::extract::Path<i64>,
     axum::extract::Extension(auth_user_opt): axum::extract::Extension<Option<AuthUser>>,
+    axum::extract::Extension(app_state): axum::extract::Extension<crate::AppState>,
 ) -> axum::response::Json<ApiResponse<DashboardStats>> {
     let auth_user = match auth_user_opt {
         Some(user) => user,
@@ -53,7 +54,8 @@ pub async fn get_user_dashboard_stats(
     let (total_clients, online_clients) = if is_admin {
         // 管理员可以看到所有客户端
         match entity::Client::find().all(db).await {
-            Ok(clients) => {
+            Ok(mut clients) => {
+                app_state.client_stream_manager.apply_online_status(&mut clients).await;
                 let online_count = clients.iter().filter(|c| c.is_online).count() as i64;
                 (clients.len() as i64, online_count)
             }
@@ -62,7 +64,8 @@ pub async fn get_user_dashboard_stats(
     } else {
         // 普通用户只统计绑定的客户端
         match get_user_clients(db, user_id).await {
-            Ok(clients) => {
+            Ok(mut clients) => {
+                app_state.client_stream_manager.apply_online_status(&mut clients).await;
                 let online_count = clients.iter().filter(|c| c.is_online).count() as i64;
                 (clients.len() as i64, online_count)
             }

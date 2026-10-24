@@ -127,80 +127,87 @@ impl AgentClientService for AgentClientServiceImpl {
 
             info!("Agent Client #{} ({}) 已通过 gRPC 认证", client_id, client_name);
 
-            // 更新客户端为在线状态
+            // 更新客户端元数据；在线状态统一由 ClientStreamManager 维护。
             let mut client_active: client::ActiveModel = client_model.into();
-            client_active.is_online = Set(true);
             client_active.version = Set(client_version);
             if let Some(ref ip) = client_ip {
                 client_active.public_ip = Set(Some(ip.clone()));
             }
             client_active.updated_at = Set(Utc::now().naive_utc());
             if let Err(e) = client_active.update(db).await {
-                error!("更新客户端 #{} 在线状态失败: {}", client_id, e);
+                error!("更新客户端 #{} 元数据失败: {}", client_id, e);
             }
 
             // 3. 先注册到 ClientStreamManager（避免注册前丢失代理更新通知）
-            client_stream_manager.register(client_id, tx.clone()).await;
-
-            // 4. 再推送当前代理列表（注册后推送，确保期间的变更不会丢失）
-            match client_stream_manager.build_proxy_list_update(client_id).await {
-                Ok(update) => {
-                    let msg = oxiproxy::ControllerToClientMessage {
-                        payload: Some(ControllerPayload::ProxyUpdate(update)),
-                    };
-                    if tx.send(Ok(msg)).await.is_err() {
-                        return;
-                    }
-                }
-                Err(e) => {
-                    error!("构建初始代理列表失败: {}", e);
-                }
+            if let Err(e) = client_stream_manager.register(client_id, tx.clone(), db).await {
+                error!("更新客户端 #{} 在线状态失败: {}", client_id, e);
             }
 
-            // 5. 消息处理循环（主要处理心跳）
-            while let Some(result) = in_stream.next().await {
-                let msg = match result {
-                    Ok(m) => m,
-                    Err(e) => {
-                        warn!("Client #{} 流错误: {}", client_id, e);
-                        break;
-                    }
-                };
-
-                let payload = match msg.payload {
-                    Some(p) => p,
-                    None => continue,
-                };
-
-                match payload {
-                    ClientPayload::Heartbeat(hb) => {
-                        let resp = oxiproxy::ControllerToClientMessage {
-                            payload: Some(ControllerPayload::HeartbeatResponse(oxiproxy::Heartbeat {
-                                timestamp: hb.timestamp,
-                            })),
+            // All exits after registration must clean up this particular session.
+            async {
+                // 4. 再推送当前代理列表（注册后推送，确保期间的变更不会丢失）
+                match client_stream_manager.build_proxy_list_update(client_id).await {
+                    Ok(update) => {
+                        let msg = oxiproxy::ControllerToClientMessage {
+                            payload: Some(ControllerPayload::ProxyUpdate(update)),
                         };
-                        let _ = tx.send(Ok(resp)).await;
+                        if tx.send(Ok(msg)).await.is_err() {
+                            return;
+                        }
                     }
-                    ClientPayload::Response(resp) => {
-                        client_stream_manager.complete_pending_request(client_id, &resp).await;
+                    Err(e) => {
+                        error!("构建初始代理列表失败: {}", e);
                     }
-                    _ => {
-                        debug!("Client #{} 收到未知消息类型", client_id);
+                }
+
+                // 5. 消息处理循环（主要处理心跳）
+                loop {
+                    let result = tokio::select! {
+                        result = in_stream.next() => match result {
+                            Some(result) => result,
+                            None => break,
+                        },
+                        _ = tx.closed() => break,
+                    };
+                    let msg = match result {
+                        Ok(m) => m,
+                        Err(e) => {
+                            warn!("Client #{} 流错误: {}", client_id, e);
+                            break;
+                        }
+                    };
+
+                    let payload = match msg.payload {
+                        Some(p) => p,
+                        None => continue,
+                    };
+
+                    match payload {
+                        ClientPayload::Heartbeat(hb) => {
+                            let resp = oxiproxy::ControllerToClientMessage {
+                                payload: Some(ControllerPayload::HeartbeatResponse(oxiproxy::Heartbeat {
+                                    timestamp: hb.timestamp,
+                                })),
+                            };
+                            if tx.send(Ok(resp)).await.is_err() {
+                                break;
+                            }
+                        }
+                        ClientPayload::Response(resp) => {
+                            client_stream_manager.complete_pending_request(client_id, &resp).await;
+                        }
+                        _ => {
+                            debug!("Client #{} 收到未知消息类型", client_id);
+                        }
                     }
                 }
             }
+            .await;
 
             // 6. 清理
             info!("Agent Client #{} ({}) gRPC 连接断开", client_id, client_name);
-            client_stream_manager.unregister(client_id).await;
-
-            // 更新客户端为离线状态
-            let db = get_connection().await;
-            if let Ok(Some(c)) = Client::find_by_id(client_id).one(db).await {
-                let mut client_active: client::ActiveModel = c.into();
-                client_active.is_online = Set(false);
-                client_active.updated_at = Set(Utc::now().naive_utc());
-                let _ = client_active.update(db).await;
+            if let Err(e) = client_stream_manager.unregister(client_id, &tx, db).await {
+                error!("更新客户端 #{} 离线状态失败: {}", client_id, e);
             }
         });
 
