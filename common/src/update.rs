@@ -4,7 +4,7 @@ use clap::{Args, ValueEnum};
 use reqwest::blocking::Client;
 use std::{
     fs::File,
-    io::{Read, Write},
+    io::{BufRead, IsTerminal, Read, Write},
     path::Path,
     time::{Duration, Instant},
 };
@@ -13,22 +13,24 @@ const DEFAULT_MIRROR: &str = "https://gh-proxy.com";
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum, PartialEq, Eq)]
 pub enum DownloadSource {
-    /// 测速后优先使用最快线路，失败时切换
+    /// 手动选择下载线路
     #[default]
+    Manual,
+    /// 自动测速选线，失败时切换（需显式启用）
     Auto,
     /// 仅使用 GitHub 直连
     Direct,
-    /// 仅使用镜像（未配置时使用默认镜像，多个镜像会测速排序）
+    /// 仅使用镜像（未配置时使用默认镜像，多个镜像需手动选择）
     Mirror,
 }
 
 #[derive(Args, Debug, Default)]
 pub struct UpdateOptions {
-    /// 更新包下载线路
+    /// 更新包下载线路，默认交互式手动选择
     #[arg(
         long,
         value_enum,
-        default_value = "auto",
+        default_value = "manual",
         env = "OXIPROXY_UPDATE_SOURCE"
     )]
     pub source: DownloadSource,
@@ -86,6 +88,19 @@ impl UpdateOptions {
             .timeout(Duration::from_secs(300))
             .build()?;
         let mut routes = self.routes(original);
+        if self.source != DownloadSource::Auto {
+            let stdin = std::io::stdin();
+            if routes.len() > 1 && !stdin.is_terminal() {
+                bail!("手动选择下载线路需要交互式终端；请使用 --source direct，或 --source mirror 指定单个镜像");
+            }
+            return download_manually(
+                &client,
+                &routes,
+                destination,
+                &mut stdin.lock(),
+                &mut std::io::stdout().lock(),
+            );
+        }
         if routes.len() > 1 {
             println!(
                 "正在并行测速 {} 条下载线路（每条最多 5 秒）...",
@@ -122,6 +137,61 @@ impl UpdateOptions {
         }
         download_routes(&client, &routes, destination)
     }
+}
+
+fn select_route(
+    routes: &[(String, String)],
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<usize> {
+    if routes.is_empty() {
+        bail!("没有可用的下载线路");
+    }
+    if routes.len() == 1 {
+        return Ok(0);
+    }
+    writeln!(output, "请选择下载线路：")?;
+    for (index, (name, _)) in routes.iter().enumerate() {
+        writeln!(output, "  {}) {}", index + 1, name)?;
+    }
+    writeln!(output, "  0) 取消更新")?;
+    let mut line = String::new();
+    loop {
+        write!(output, "请输入线路编号 [1-{}，0 取消]: ", routes.len())?;
+        output.flush()?;
+        line.clear();
+        if input.read_line(&mut line)? == 0 {
+            bail!("未选择下载线路，更新已取消");
+        }
+        match line.trim().parse::<usize>() {
+            Ok(0) => bail!("更新已取消"),
+            Ok(number) if number <= routes.len() => return Ok(number - 1),
+            _ => writeln!(output, "无效的线路编号，请重新输入。")?,
+        }
+    }
+}
+
+fn download_manually(
+    client: &Client,
+    routes: &[(String, String)],
+    destination: &Path,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<()> {
+    let index = select_route(routes, input, output)?;
+    let (name, url) = &routes[index];
+    writeln!(output, "使用线路: {}", name)?;
+    output.flush()?;
+    if let Err(error) = download_one(client, url, destination) {
+        let _ = std::fs::remove_file(destination);
+        return Err(error).with_context(|| {
+            format!(
+                "{} 下载失败，请重新运行 update 选择线路（超时 300 秒）",
+                name
+            )
+        });
+    }
+    Ok(())
 }
 
 fn probe(client: &Client, url: &str) -> Result<f64> {
@@ -214,6 +284,13 @@ mod tests {
             #[command(flatten)]
             options: UpdateOptions,
         }
+        let cli = Cli::try_parse_from(["update"]).unwrap();
+        assert_eq!(cli.options.source, DownloadSource::Manual);
+        assert_eq!(UpdateOptions::default().source, DownloadSource::Manual);
+        let cli = Cli::try_parse_from(["update", "--source", "manual"]).unwrap();
+        assert_eq!(cli.options.source, DownloadSource::Manual);
+        let cli = Cli::try_parse_from(["update", "--source", "auto"]).unwrap();
+        assert_eq!(cli.options.source, DownloadSource::Auto);
         let cli = Cli::try_parse_from([
             "update",
             "--source",
@@ -296,6 +373,46 @@ mod tests {
         assert_ne!(options.routes(original)[0].1, original);
     }
 
+    #[test]
+    fn selection_requires_a_valid_number_without_a_default() {
+        let routes = UpdateOptions::default().routes("https://github.com/archive");
+        let mut input = std::io::Cursor::new("\ninvalid\n3\n-1\n 2 \n");
+        let mut output = Vec::new();
+        assert_eq!(select_route(&routes, &mut input, &mut output).unwrap(), 1);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("1) GitHub 直连"));
+        assert!(output.contains("2) 镜像 https://gh-proxy.com"));
+        assert_eq!(output.matches("无效的线路编号").count(), 4);
+    }
+
+    #[test]
+    fn selection_can_be_cancelled_or_ended_without_choosing() {
+        let routes = UpdateOptions::default().routes("https://github.com/archive");
+        for input in ["0\n", "", "\n"] {
+            let error = select_route(&routes, &mut std::io::Cursor::new(input), &mut Vec::new())
+                .unwrap_err();
+            assert!(error.to_string().contains("更新已取消"));
+        }
+    }
+
+    #[test]
+    fn single_explicit_route_does_not_prompt() {
+        let original = "https://github.com/archive";
+        for source in [DownloadSource::Direct, DownloadSource::Mirror] {
+            let routes = UpdateOptions {
+                source,
+                mirror: vec![],
+            }
+            .routes(original);
+            let mut output = Vec::new();
+            assert_eq!(
+                select_route(&routes, &mut std::io::empty(), &mut output).unwrap(),
+                0
+            );
+            assert!(output.is_empty());
+        }
+    }
+
     fn serve(responses: Vec<&'static str>) -> (String, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -311,6 +428,81 @@ mod tests {
             }
         });
         (url, handle)
+    }
+
+    #[test]
+    fn manual_download_only_contacts_the_selected_route() {
+        let unused = TcpListener::bind("127.0.0.1:0").unwrap();
+        unused.set_nonblocking(true).unwrap();
+        let (url, server) = serve(vec![
+            "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ngood",
+        ]);
+        let routes = vec![
+            (
+                "direct".into(),
+                format!("http://{}", unused.local_addr().unwrap()),
+            ),
+            ("mirror".into(), url),
+        ];
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("archive");
+        let client = Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        download_manually(
+            &client,
+            &routes,
+            &path,
+            &mut std::io::Cursor::new("2\n"),
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), b"good");
+        assert_eq!(
+            unused.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn failed_manual_download_removes_partial_file_without_switching() {
+        let unused = TcpListener::bind("127.0.0.1:0").unwrap();
+        unused.set_nonblocking(true).unwrap();
+        let (url, server) = serve(vec![
+            "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\npartial",
+        ]);
+        let routes = vec![
+            ("direct".into(), url),
+            (
+                "mirror".into(),
+                format!("http://{}", unused.local_addr().unwrap()),
+            ),
+        ];
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("archive");
+        let client = Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let error = download_manually(
+            &client,
+            &routes,
+            &path,
+            &mut std::io::Cursor::new("1\n"),
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("重新运行 update 选择线路"));
+        assert!(!path.exists());
+        assert_eq!(
+            unused.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        server.join().unwrap();
     }
 
     #[test]

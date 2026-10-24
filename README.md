@@ -648,29 +648,34 @@ rm -f data/oxiproxy.db
 已支持新下载参数的版本可在命令行选择更新包下载线路（`controller`、`node`、`client` 通用）：
 
 ```bash
-# 默认自动模式：GitHub + 默认 gh-proxy.com 镜像并行测速，失败时自动切换
+# 默认手动模式：显示 GitHub 直连和默认镜像，输入编号后开始下载
 ./controller update
 
 # 自定义镜像会替换默认镜像
 ./controller update --mirror https://your-trusted-proxy.example
 
-# 多条候选线路（将示例域名替换为你信任的 GitHub 下载代理）
-./controller update --source auto --mirror https://proxy-a.example --mirror https://proxy-b.example
+# 多条候选线路，手动选择（将示例域名替换为你信任的 GitHub 下载代理）
+./controller update --mirror https://proxy-a.example --mirror https://proxy-b.example
 
 # 强制直连 / 仅在指定镜像之间选择
 ./controller update --source direct
 ./controller update --source mirror  # 仅使用默认镜像
 ./controller update --source mirror --mirror https://your-trusted-proxy.example
 
+# 显式启用自动模式：并行测速，优先使用最快线路，失败时自动切换
+./controller update --source auto
+
 # 保存到 shell 环境，之后直接执行 update
 export OXIPROXY_UPDATE_MIRRORS=https://proxy-a.example,https://proxy-b.example
-export OXIPROXY_UPDATE_SOURCE=auto
+export OXIPROXY_UPDATE_SOURCE=manual
 ./controller update
 ```
 
-镜像采用 `https://代理前缀/https://github.com/...` 拼接格式，仅支持 HTTPS 前缀，最多 8 条。默认使用第三方镜像 `https://gh-proxy.com`，自动模式会与 GitHub 直连一起测速并按速度排序，下载失败时切换备用线路。`--mirror` 或 `OXIPROXY_UPDATE_MIRRORS` 会替换默认镜像；`--source direct` 可禁用镜像。请仅配置可信代理，它们会提供可执行更新包。测速并行读取最多 256 KiB，每条最多 5 秒，测速失败的线路保留为备用；实际速度会随网络变化，完整下载每条最多等待 300 秒。该设置只影响命令行更新包下载，版本查询仍使用 GitHub API，面板远程更新和安装脚本暂不受影响。
+默认模式会列出线路菜单，等待输入编号；输入 `0` 可取消，直接回车不会选择任何线路。手动选择后只尝试该线路，下载失败时退出，可重新运行命令选择其他线路。`--source mirror` 配置多个镜像时也需要手动选择。脚本或非交互环境请使用 `--source direct`，或用 `--source mirror` 指定单个镜像；需要自动测速和失败切换时，显式设置 `--source auto` 或 `OXIPROXY_UPDATE_SOURCE=auto`。
 
-截图中的旧版更新器尚不识别这些参数，需要先手动安装包含此功能的新版本；更新完成后仍需重启相应服务。
+镜像采用 `https://代理前缀/https://github.com/...` 拼接格式，仅支持 HTTPS 前缀，最多 8 条。默认镜像为 `https://gh-proxy.com`；`--mirror` 或 `OXIPROXY_UPDATE_MIRRORS` 会替换默认镜像；`--source direct` 可禁用镜像。请仅配置可信代理，它们会提供可执行更新包。仅自动模式会并行测速，每条读取最多 256 KiB、最多 5 秒，测速失败的线路保留为备用；完整下载每条最多等待 300 秒。该设置只影响命令行更新包下载，版本查询仍使用 GitHub API，面板远程更新和安装脚本暂不受影响。
+
+旧版更新器的默认行为取决于已安装版本，需要先更新到包含手动选择功能的版本。若旧版尚不识别这些参数，可使用下方安装脚本更新；更新完成后仍需重启相应服务。
 
 
 ```bash
