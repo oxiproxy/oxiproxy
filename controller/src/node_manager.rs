@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use sea_orm::{EntityTrait, ColumnTrait, QueryFilter};
+use chrono::Utc;
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn};
 
@@ -19,7 +20,7 @@ use common::protocol::control::{
     ConnectedClient, LogEntry, ProxyControl, ServerStatus,
 };
 
-use crate::entity::Node;
+use crate::entity::{node, Node};
 use crate::migration::get_connection;
 
 /// 单个节点的 gRPC 流连接
@@ -54,19 +55,78 @@ impl NodeManager {
         &self,
         node_id: i64,
         tx: mpsc::Sender<Result<oxiproxy::ControllerToAgentMessage, tonic::Status>>,
-    ) {
+        db: &DatabaseConnection,
+    ) -> Result<()> {
         let stream = NodeStream {
             tx,
             pending: PendingRequests::new(),
         };
-        self.streams.write().await.insert(node_id, stream);
+        let mut streams = self.streams.write().await;
+        streams.insert(node_id, stream);
         info!("节点 #{} gRPC 流已注册", node_id);
+        // Keep the database write ordered with cleanup and periodic sync.
+        Self::persist_online_status(db, node_id, true).await
     }
 
-    /// 移除一个 Agent Server 的 gRPC 流
-    pub async fn unregister_node_stream(&self, node_id: i64) {
-        self.streams.write().await.remove(&node_id);
+    /// Only the current session may remove its stream or mark the node offline.
+    pub async fn unregister_node_stream(
+        &self,
+        node_id: i64,
+        tx: &mpsc::Sender<Result<oxiproxy::ControllerToAgentMessage, tonic::Status>>,
+        db: &DatabaseConnection,
+    ) -> Result<()> {
+        let mut streams = self.streams.write().await;
+        if !streams
+            .get(&node_id)
+            .is_some_and(|stream| stream.tx.same_channel(tx))
+        {
+            return Ok(());
+        }
+        streams.remove(&node_id);
         info!("节点 #{} gRPC 流已移除", node_id);
+        Self::persist_online_status(db, node_id, false).await
+    }
+
+    async fn persist_online_status(
+        db: &DatabaseConnection,
+        node_id: i64,
+        online: bool,
+    ) -> Result<()> {
+        let now = Utc::now().naive_utc();
+        let mut active = node::ActiveModel {
+            id: Set(node_id),
+            is_online: Set(online),
+            updated_at: Set(now),
+            ..Default::default()
+        };
+        if online {
+            active.last_online_at = Set(Some(now));
+        }
+        active.update(db).await?;
+        Ok(())
+    }
+
+    /// Use live sessions for API responses, even before periodic persistence.
+    pub async fn apply_online_status(&self, nodes: &mut [node::Model]) {
+        let streams = self.streams.read().await;
+        for node in nodes {
+            node.is_online = streams
+                .get(&node.id)
+                .is_some_and(|stream| !stream.tx.is_closed());
+        }
+    }
+
+    /// Serialize each status write with registration and session cleanup.
+    pub async fn sync_online_status(&self, db: &DatabaseConnection) -> Result<()> {
+        let nodes = Node::find().all(db).await?;
+        for node in nodes {
+            let streams = self.streams.read().await;
+            let online = streams
+                .get(&node.id)
+                .is_some_and(|stream| !stream.tx.is_closed());
+            Self::persist_online_status(db, node.id, online).await?;
+        }
+        Ok(())
     }
 
     /// 完成一个待处理的请求（由 AgentServerResponse 触发）
@@ -159,32 +219,13 @@ impl NodeManager {
             .map_err(|_| anyhow!("同步公网代理失败"))
     }
 
-    /// 健康检查所有节点
-    pub async fn check_all_nodes(&self) -> Vec<(i64, bool)> {
-        let db = get_connection().await;
-        let all_nodes = match Node::find().all(db).await {
-            Ok(nodes) => nodes,
-            Err(e) => {
-                warn!("查询节点列表失败: {}", e);
-                return vec![];
-            }
-        };
-
-        let streams = self.streams.read().await;
-
-        all_nodes
-            .into_iter()
-            .map(|node| {
-                let is_online = streams.contains_key(&node.id);
-                (node.id, is_online)
-            })
-            .collect()
-    }
-
     /// 获取所有已连接的节点 ID
     pub async fn get_loaded_node_ids(&self) -> Vec<i64> {
         let streams = self.streams.read().await;
-        streams.keys().cloned().collect()
+        streams
+            .iter()
+            .filter_map(|(&id, stream)| (!stream.tx.is_closed()).then_some(id))
+            .collect()
     }
 
     /// 获取节点日志
@@ -528,3 +569,6 @@ impl ProxyControl for NodeManager {
         Err(anyhow!("Controller 不支持证书更新操作"))
     }
 }
+
+#[cfg(test)]
+mod tests;

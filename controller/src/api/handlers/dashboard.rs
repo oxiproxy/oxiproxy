@@ -135,7 +135,8 @@ pub async fn get_user_dashboard_stats(
 
     // 统计节点数量
     let (total_nodes, online_nodes) = match entity::Node::find().all(db).await {
-        Ok(nodes) => {
+        Ok(mut nodes) => {
+            app_state.node_manager.apply_online_status(&mut nodes).await;
             let online_count = nodes.iter().filter(|n| n.is_online).count() as i64;
             (nodes.len() as i64, online_count)
         }

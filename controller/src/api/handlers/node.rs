@@ -79,6 +79,7 @@ pub struct UpdateNodeRequest {
 /// GET /api/nodes — 列出节点（管理员看全部，普通用户看可用的）
 pub async fn list_nodes(
     Extension(auth_user_opt): Extension<Option<AuthUser>>,
+    Extension(app_state): Extension<AppState>,
 ) -> impl IntoResponse {
     let auth_user = match auth_user_opt {
         Some(user) => user,
@@ -90,7 +91,10 @@ pub async fn list_nodes(
     if auth_user.is_admin {
         // 管理员可以看到所有节点
         match Node::find().all(db).await {
-            Ok(nodes) => (StatusCode::OK, ApiResponse::success(nodes)),
+            Ok(mut nodes) => {
+                app_state.node_manager.apply_online_status(&mut nodes).await;
+                (StatusCode::OK, ApiResponse::success(nodes))
+            }
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ApiResponse::<Vec<node::Model>>::error(format!("Failed to list nodes: {}", e)),
@@ -111,11 +115,15 @@ pub async fn list_nodes(
                 };
 
                 // 过滤出共享节点 + 用户的独享节点
-                let available_nodes: Vec<node::Model> = all_nodes
+                let mut available_nodes: Vec<node::Model> = all_nodes
                     .into_iter()
                     .filter(|node| node.node_type == "shared" || user_node_ids.contains(&node.id))
                     .collect();
 
+                app_state
+                    .node_manager
+                    .apply_online_status(&mut available_nodes)
+                    .await;
                 (StatusCode::OK, ApiResponse::success(available_nodes))
             }
             Err(e) => (
@@ -188,6 +196,7 @@ pub async fn create_node(
 pub async fn get_node(
     Path(id): Path<i64>,
     Extension(auth_user_opt): Extension<Option<AuthUser>>,
+    Extension(app_state): Extension<AppState>,
 ) -> impl IntoResponse {
     let auth_user = match auth_user_opt {
         Some(user) => user,
@@ -200,7 +209,13 @@ pub async fn get_node(
 
     let db = get_connection().await;
     match Node::find_by_id(id).one(db).await {
-        Ok(Some(node_model)) => (StatusCode::OK, ApiResponse::success(node_model)),
+        Ok(Some(mut node_model)) => {
+            app_state
+                .node_manager
+                .apply_online_status(std::slice::from_mut(&mut node_model))
+                .await;
+            (StatusCode::OK, ApiResponse::success(node_model))
+        }
         Ok(None) => (StatusCode::NOT_FOUND, ApiResponse::<node::Model>::error("Node not found".to_string())),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -287,7 +302,7 @@ pub async fn update_node(
     active.updated_at = Set(Utc::now().naive_utc());
 
     match active.update(db).await {
-        Ok(updated) => {
+        Ok(mut updated) => {
             // 检查协议是否变更
             if let Some(ref new_protocol) = new_protocol_opt {
                 if new_protocol != &old_protocol {
@@ -324,6 +339,10 @@ pub async fn update_node(
                 }
             }
 
+            app_state
+                .node_manager
+                .apply_online_status(std::slice::from_mut(&mut updated))
+                .await;
             (StatusCode::OK, ApiResponse::success(updated))
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, ApiResponse::<node::Model>::error(format!("Failed to update node: {}", e))),

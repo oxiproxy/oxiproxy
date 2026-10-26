@@ -466,7 +466,11 @@ pub async fn delete_user(
 }
 
 /// GET /api/users/:id/nodes - Get user's node list (admin only)
-pub async fn get_user_nodes(Extension(auth_user_opt): Extension<Option<AuthUser>>, Path(user_id): Path<i64>) -> impl IntoResponse {
+pub async fn get_user_nodes(
+    Extension(auth_user_opt): Extension<Option<AuthUser>>,
+    Extension(app_state): Extension<crate::AppState>,
+    Path(user_id): Path<i64>,
+) -> impl IntoResponse {
     let auth_user = match auth_user_opt {
         Some(user) => user,
         None => return (StatusCode::UNAUTHORIZED, ApiResponse::<Vec<crate::entity::node::Model>>::error("Not authenticated".to_string())),
@@ -483,11 +487,12 @@ pub async fn get_user_nodes(Extension(auth_user_opt): Extension<Option<AuthUser>
         .await
     {
         Ok(user_nodes) => {
-            let nodes: Vec<_> = user_nodes
+            let mut nodes: Vec<_> = user_nodes
                 .into_iter()
                 .filter_map(|(_, node)| node)
                 .collect();
 
+            app_state.node_manager.apply_online_status(&mut nodes).await;
             (StatusCode::OK, ApiResponse::success(nodes))
         }
         Err(e) => (

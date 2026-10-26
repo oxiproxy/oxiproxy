@@ -800,28 +800,11 @@ fn start_node_health_monitor(node_manager: Arc<node_manager::NodeManager>) {
         loop {
             interval.tick().await;
 
-            let results = node_manager.check_all_nodes().await;
-            let db = get_connection().await;
-
-            for (node_id, is_online) in results {
-                if let Ok(Some(node)) = entity::Node::find_by_id(node_id).one(db).await {
-                    let was_online = node.is_online;
-                    if was_online != is_online {
-                        if is_online {
-                            info!("节点 #{} ({}) 已上线", node_id, node.name);
-                        } else {
-                            tracing::warn!("节点 #{} ({}) 已离线", node_id, node.name);
-                        }
-                    }
-
-                    let mut active: entity::node::ActiveModel = node.into();
-                    active.is_online = Set(is_online);
-                    if is_online {
-                        active.last_online_at = Set(Some(Utc::now().naive_utc()));
-                    }
-                    active.updated_at = Set(Utc::now().naive_utc());
-                    let _ = active.update(db).await;
-                }
+            if let Err(error) = node_manager
+                .sync_online_status(get_connection().await)
+                .await
+            {
+                tracing::error!(%error, "同步节点在线状态失败");
             }
         }
     });

@@ -105,7 +105,7 @@ impl AgentServerService for AgentServerServiceImpl {
 
             // 更新节点信息（tunnel_port 和 tunnel_protocol 均以 Controller DB 为权威来源）
             let mut active: crate::entity::node::ActiveModel = node_model.into();
-            active.is_online = Set(true);
+            // 在线状态由 NodeManager 在控制流注册后统一维护。
             active.updated_at = Set(Utc::now().naive_utc());
             active.version = Set(if register_req.version.is_empty() { None } else { Some(register_req.version.clone()) });
 
@@ -163,7 +163,12 @@ impl AgentServerService for AgentServerServiceImpl {
             }
 
             // 3. 将 stream sender 注册到 NodeManager
-            node_manager.register_node_stream(node_id, tx.clone()).await;
+            if let Err(error) = node_manager
+                .register_node_stream(node_id, tx.clone(), db)
+                .await
+            {
+                error!(%error, %node_id, "更新节点在线状态失败");
+            }
             if let Err(error) = node_manager.send_direct_snapshot(node_id).await {
                 warn!(%error, %node_id, "恢复公网直连代理失败");
             }
@@ -171,7 +176,14 @@ impl AgentServerService for AgentServerServiceImpl {
             // 4. 消息处理循环
             let auth_provider = LocalControllerAuthProvider::new();
 
-            while let Some(result) = in_stream.next().await {
+            loop {
+                let result = tokio::select! {
+                    result = in_stream.next() => match result {
+                        Some(result) => result,
+                        None => break,
+                    },
+                    _ = tx.closed() => break,
+                };
                 let msg = match result {
                     Ok(m) => m,
                     Err(e) => {
@@ -192,7 +204,9 @@ impl AgentServerService for AgentServerServiceImpl {
                                 timestamp: hb.timestamp,
                             })),
                         };
-                        let _ = tx.send(Ok(resp)).await;
+                        if tx.send(Ok(resp)).await.is_err() {
+                            break;
+                        }
                     }
 
                     AgentPayload::ValidateToken(req) => {
@@ -216,7 +230,9 @@ impl AgentServerService for AgentServerServiceImpl {
                         let msg = oxiproxy::ControllerToAgentMessage {
                             payload: Some(ControllerPayload::ValidateTokenResponse(resp)),
                         };
-                        let _ = tx.send(Ok(msg)).await;
+                        if tx.send(Ok(msg)).await.is_err() {
+                            break;
+                        }
                     }
 
                     AgentPayload::ClientOnline(req) => {
@@ -232,7 +248,9 @@ impl AgentServerService for AgentServerServiceImpl {
                                 },
                             )),
                         };
-                        let _ = tx.send(Ok(resp)).await;
+                        if tx.send(Ok(resp)).await.is_err() {
+                            break;
+                        }
                     }
 
                     AgentPayload::CheckTrafficLimit(req) => {
@@ -257,7 +275,9 @@ impl AgentServerService for AgentServerServiceImpl {
                         let msg = oxiproxy::ControllerToAgentMessage {
                             payload: Some(ControllerPayload::TrafficLimitResponse(resp)),
                         };
-                        let _ = tx.send(Ok(msg)).await;
+                        if tx.send(Ok(msg)).await.is_err() {
+                            break;
+                        }
                     }
 
                     AgentPayload::GetClientProxies(req) => {
@@ -272,7 +292,9 @@ impl AgentServerService for AgentServerServiceImpl {
                         let msg = oxiproxy::ControllerToAgentMessage {
                             payload: Some(ControllerPayload::GetClientProxiesResponse(resp)),
                         };
-                        let _ = tx.send(Ok(msg)).await;
+                        if tx.send(Ok(msg)).await.is_err() {
+                            break;
+                        }
                     }
 
                     AgentPayload::TrafficReport(req) => {
@@ -295,7 +317,9 @@ impl AgentServerService for AgentServerServiceImpl {
                                 oxiproxy::TrafficReportResponse { accepted: true },
                             )),
                         };
-                        let _ = tx.send(Ok(resp)).await;
+                        if tx.send(Ok(resp)).await.is_err() {
+                            break;
+                        }
                     }
 
                     AgentPayload::Response(resp) => {
@@ -311,14 +335,8 @@ impl AgentServerService for AgentServerServiceImpl {
 
             // 5. 清理：标记节点离线
             info!("节点 #{} ({}) gRPC 连接断开", node_id, node_name);
-            node_manager.unregister_node_stream(node_id).await;
-
-            let db = get_connection().await;
-            if let Ok(Some(n)) = Node::find_by_id(node_id).one(db).await {
-                let mut active: crate::entity::node::ActiveModel = n.into();
-                active.is_online = Set(false);
-                active.updated_at = Set(Utc::now().naive_utc());
-                let _ = active.update(db).await;
+            if let Err(error) = node_manager.unregister_node_stream(node_id, &tx, db).await {
+                error!(%error, %node_id, "更新节点离线状态失败");
             }
         });
 
